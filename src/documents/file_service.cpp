@@ -1,6 +1,8 @@
 #include "documents/file_service.hpp"
+#include "platform/path_resolver.hpp"
 
 #include <QByteArray>
+#include <QCryptographicHash>
 #include <QFile>
 #include <QFileInfo>
 #include <QSaveFile>
@@ -16,15 +18,6 @@
 
 namespace note::documents {
 namespace {
-
-QString toQString(const std::filesystem::path& path) {
-#if defined(_WIN32)
-    return QString::fromStdWString(path.native());
-#else
-    const auto utf8 = path.u8string();
-    return QString::fromUtf8(reinterpret_cast<const char*>(utf8.data()), static_cast<qsizetype>(utf8.size()));
-#endif
-}
 
 std::string utf8(const QString& value) {
     const auto bytes = value.toUtf8();
@@ -43,11 +36,12 @@ bool mixedEndings(const std::vector<editor::LineEnding>& endings) {
     return std::any_of(endings.begin() + 1, endings.end(), [&](auto ending) { return ending != endings.front(); });
 }
 
-bool writeAll(QSaveFile& file, const char* data, qsizetype size) {
+bool writeAll(QSaveFile& file, const char* data, qsizetype size, QCryptographicHash* hash = nullptr) {
     qsizetype written = 0;
     while (written < size) {
         const auto count = file.write(data + written, size - written);
         if (count <= 0) return false;
+        if (hash) hash->addData(QByteArrayView(data + written, count));
         written += count;
     }
     return true;
@@ -64,27 +58,60 @@ FileMetadata fileMetadata(const QFileInfo& info) {
     return {static_cast<std::uintmax_t>(info.size()), info.lastModified().toMSecsSinceEpoch()};
 }
 
+FileInspection inspectFile(const std::filesystem::path& path) {
+    const auto qpath = platform::pathToQString(path);
+    QFile file(qpath);
+    if (!file.exists()) return {false, {}, {}};
+    if (!file.open(QIODevice::ReadOnly)) {
+        if (!QFileInfo::exists(qpath)) return {false, {}, {}};
+        return {true, {}, utf8(file.errorString())};
+    }
+    const QFileInfo before(file);
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    while (!file.atEnd()) {
+        const auto bytes = file.read(1024 * 1024);
+        if (bytes.isEmpty() && file.error() != QFileDevice::NoError)
+            return {true, {}, utf8(file.errorString())};
+        if (bytes.isEmpty()) break;
+        hash.addData(bytes);
+    }
+    if (file.error() != QFileDevice::NoError) return {true, {}, utf8(file.errorString())};
+    const QFileInfo after(qpath);
+    if (!after.exists()) return {false, {}, {}};
+    if (before.size() != after.size() ||
+        before.lastModified().toMSecsSinceEpoch() != after.lastModified().toMSecsSinceEpoch())
+        return {true, {}, "The file changed while its contents were being checked."};
+    auto metadata = fileMetadata(after);
+    const auto digest = hash.result();
+    std::copy_n(reinterpret_cast<const std::uint8_t*>(digest.constData()), metadata.sha256.size(), metadata.sha256.begin());
+    metadata.hasFingerprint = true;
+    return {true, metadata, {}};
+}
+
 FileOperationResult writeDocument(Document& document, const std::filesystem::path& path,
-                                  std::uint64_t& savedRevision, DocumentMetadata& savedMetadata) {
+                                  std::uint64_t& savedRevision, DocumentMetadata& savedMetadata,
+                                  std::optional<std::array<std::uint8_t, 32>> expectedFingerprint,
+                                  bool expectAbsent) {
     savedRevision = document.buffer().revision();
     savedMetadata = document.metadata();
     const auto snapshot = document.buffer().snapshot();
-    const auto qpath = toQString(path);
+    const auto qpath = platform::pathToQString(path);
+    QCryptographicHash contentHash(QCryptographicHash::Sha256);
     QSaveFile file(qpath);
     file.setDirectWriteFallback(false);
     if (!file.open(QIODevice::WriteOnly)) return {false, utf8(file.errorString())};
 
-    if (document.metadata().encoding == FileEncoding::utf8Bom && !writeAll(file, "\xef\xbb\xbf", 3)) {
+    if (document.metadata().encoding == FileEncoding::utf8Bom && !writeAll(file, "\xef\xbb\xbf", 3, &contentHash)) {
         const auto message = utf8(file.errorString());
         file.cancelWriting();
         return {false, message};
     }
-    if (document.metadata().encoding == FileEncoding::utf16LittleEndian && !writeAll(file, "\xff\xfe", 2)) {
+    if (document.metadata().encoding == FileEncoding::utf16LittleEndian && !writeAll(file, "\xff\xfe", 2, &contentHash)) {
         const auto message = utf8(file.errorString());
         file.cancelWriting();
         return {false, message};
     }
-    if (document.metadata().encoding == FileEncoding::utf16BigEndian && !writeAll(file, "\xfe\xff", 2)) {
+    if (document.metadata().encoding == FileEncoding::utf16BigEndian && !writeAll(file, "\xfe\xff", 2, &contentHash)) {
         const auto message = utf8(file.errorString());
         file.cancelWriting();
         return {false, message};
@@ -100,9 +127,9 @@ FileOperationResult writeDocument(Document& document, const std::filesystem::pat
         if (document.metadata().encoding == FileEncoding::utf16LittleEndian ||
             document.metadata().encoding == FileEncoding::utf16BigEndian) {
             const auto encoded = encodeUtf16(chunk, document.metadata().encoding);
-            ok = writeAll(file, encoded.constData(), encoded.size());
+            ok = writeAll(file, encoded.constData(), encoded.size(), &contentHash);
         } else {
-            ok = writeAll(file, chunk.data(), static_cast<qsizetype>(chunk.size()));
+            ok = writeAll(file, chunk.data(), static_cast<qsizetype>(chunk.size()), &contentHash);
         }
         chunk.clear();
         return ok;
@@ -169,11 +196,25 @@ FileOperationResult writeDocument(Document& document, const std::filesystem::pat
         file.cancelWriting();
         return {false, "Text buffer newline metadata is inconsistent."};
     }
+    const auto current = inspectFile(path);
+    if (!current.error.empty()) {
+        file.cancelWriting();
+        return {false, current.error};
+    }
+    if ((expectAbsent && current.exists) ||
+        (expectedFingerprint && (!current.exists || current.metadata.sha256 != *expectedFingerprint))) {
+        file.cancelWriting();
+        return {false, "The destination changed on disk while the save was being prepared. Your document is unchanged; use Save As or reload.", true, !current.exists};
+    }
     if (!file.commit()) return {false, utf8(file.errorString())};
 
     const QFileInfo info(qpath);
     savedMetadata.path = path;
     savedMetadata.file = fileMetadata(info);
+    const auto digest = contentHash.result();
+    std::copy_n(reinterpret_cast<const std::uint8_t*>(digest.constData()), savedMetadata.file->sha256.size(),
+                savedMetadata.file->sha256.begin());
+    savedMetadata.file->hasFingerprint = true;
     if (!snapshot.lineEndings.empty()) {
         savedMetadata.preferredLineEnding = preferredEnding(snapshot.lineEndings);
         savedMetadata.mixedLineEndings = mixedEndings(snapshot.lineEndings);
@@ -189,7 +230,7 @@ OpenFileResult FileService::open(const std::filesystem::path& path) const {
 
 OpenFileResult FileService::open(const std::filesystem::path& path, const OpenOptions& options) const {
     if (options.cancelled && options.cancelled->load()) return {nullptr, {}, "Opening was cancelled."};
-    const auto qpath = toQString(path);
+    const auto qpath = platform::pathToQString(path);
     QFile file(qpath);
     if (!file.open(QIODevice::ReadOnly)) return {nullptr, {}, utf8(file.errorString())};
     const QFileInfo initialInfo(file);
@@ -199,6 +240,8 @@ OpenFileResult FileService::open(const std::filesystem::path& path, const OpenOp
     QByteArray first = file.read(std::max<qsizetype>(chunkSize, 4));
     if (file.error() != QFileDevice::NoError) return {nullptr, {}, utf8(file.errorString())};
     if (options.cancelled && options.cancelled->load()) return {nullptr, {}, "Opening was cancelled."};
+    QCryptographicHash inputHash(QCryptographicHash::Sha256);
+    inputHash.addData(first);
 
     FileEncoding fileEncoding = FileEncoding::utf8;
     QStringDecoder::Encoding encoding = QStringDecoder::Utf8;
@@ -321,6 +364,7 @@ OpenFileResult FileService::open(const std::filesystem::path& path, const OpenOp
         const auto bytes = file.read(chunkSize);
         if (bytes.isEmpty() && file.error() != QFileDevice::NoError) return {nullptr, {}, utf8(file.errorString())};
         if (bytes.isEmpty()) break;
+        inputHash.addData(bytes);
         if (!decodeChunk(QByteArrayView(bytes.constData(), bytes.size()))) {
             const bool utf16 = fileEncoding == FileEncoding::utf16LittleEndian || fileEncoding == FileEncoding::utf16BigEndian;
             return {nullptr, {}, utf16 ? "The file contains malformed UTF-16 data." : "The file is not valid UTF-8; legacy encodings are not guessed."};
@@ -349,6 +393,10 @@ OpenFileResult FileService::open(const std::filesystem::path& path, const OpenOp
     metadata.preferredLineEnding = preferredEnding(snapshot.lineEndings);
     metadata.mixedLineEndings = mixedEndings(snapshot.lineEndings);
     metadata.file = fileMetadata(finalInfo);
+    const auto digest = inputHash.result();
+    std::copy_n(reinterpret_cast<const std::uint8_t*>(digest.constData()), metadata.file->sha256.size(),
+                metadata.file->sha256.begin());
+    metadata.file->hasFingerprint = true;
     std::unique_ptr<editor::TextBuffer> buffer;
     try { buffer = std::make_unique<editor::TextBuffer>(std::move(snapshot)); }
     catch (const std::exception&) {
@@ -357,23 +405,58 @@ OpenFileResult FileService::open(const std::filesystem::path& path, const OpenOp
             : "The file contains malformed UTF-16 data."};
     }
     if (options.cancelled && options.cancelled->load()) return {nullptr, {}, "Opening was cancelled."};
+    const auto finalInspection = inspectFile(path);
+    if (!finalInspection.exists || !finalInspection.error.empty() ||
+        finalInspection.metadata.sha256 != metadata.file->sha256)
+        return {nullptr, {}, "The file changed while it was being opened. Please try again."};
     return {std::move(buffer), std::move(metadata), {}};
+}
+
+FileInspection FileService::inspect(const std::filesystem::path& path) const {
+    return inspectFile(path);
 }
 
 FileOperationResult FileService::save(Document& document) const {
     if (!document.metadata().path) return {false, "Document has no associated path; use Save As."};
+    if (!document.metadata().file || !document.metadata().file->hasFingerprint)
+        return {false, "Cannot verify the saved file contents. Use Save As to write to a new path.", true};
+    const auto current = inspect(*document.metadata().path);
+    if (!current.error.empty()) return {false, current.error};
+    if (!current.exists || current.metadata.sha256 != document.metadata().file->sha256)
+        return {false, current.exists
+            ? "The file changed outside Note. Your edits are safe; use Save As or reload the disk copy."
+            : "The file was removed outside Note. Your edits are safe; use Save As to keep them.",
+            true, !current.exists};
     std::uint64_t revision = 0;
     DocumentMetadata metadata;
-    auto result = writeDocument(document, *document.metadata().path, revision, metadata);
+    auto result = writeDocument(document, *document.metadata().path, revision, metadata,
+                                current.metadata.sha256, false);
     if (result) (void)document.recordSuccessfulSave(revision, std::move(metadata));
     return result;
 }
 
-FileOperationResult FileService::saveAs(Document& document, const std::filesystem::path& path) const {
+FileOperationResult FileService::saveAs(Document& document, const std::filesystem::path& path,
+                                        bool allowOverwrite,
+                                        std::optional<std::array<std::uint8_t, 32>> expectedTargetFingerprint) const {
     if (path.empty()) return {false, "Save path is empty."};
+    const auto targetState = inspect(path);
+    if (!targetState.error.empty()) return {false, targetState.error};
+    if (document.metadata().path) {
+        std::error_code ec1, ec2;
+        const auto source = std::filesystem::weakly_canonical(*document.metadata().path, ec1);
+        const auto target = std::filesystem::weakly_canonical(path, ec2);
+        if (!ec1 && !ec2 && source == target && targetState.exists) return save(document);
+    }
+    if (targetState.exists && !allowOverwrite)
+        return {false, "The destination already exists. Confirm replacement or choose another path.", true};
+    if (targetState.exists && (!expectedTargetFingerprint ||
+        targetState.metadata.sha256 != *expectedTargetFingerprint))
+        return {false, "The destination changed since it was confirmed. Choose it again before replacing it.", true};
     std::uint64_t revision = 0;
     DocumentMetadata metadata;
-    auto result = writeDocument(document, path, revision, metadata);
+    auto result = writeDocument(document, path, revision, metadata,
+                                targetState.exists ? expectedTargetFingerprint : std::nullopt,
+                                !targetState.exists);
     if (result) (void)document.recordSuccessfulSave(revision, std::move(metadata));
     return result;
 }

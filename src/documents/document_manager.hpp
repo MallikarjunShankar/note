@@ -15,6 +15,8 @@ class DocumentManager final {
 public:
     Document& createNew();
     Document& registerOpened(std::unique_ptr<editor::TextBuffer> buffer, DocumentMetadata metadata);
+    bool replaceOpenedContents(DocumentId id, std::unique_ptr<editor::TextBuffer> buffer,
+                               DocumentMetadata metadata);
     [[nodiscard]] Document* find(DocumentId id) noexcept;
     [[nodiscard]] const Document* find(DocumentId id) const noexcept;
     [[nodiscard]] std::optional<DocumentId> findByPath(
@@ -23,6 +25,7 @@ public:
     [[nodiscard]] std::size_t size() const noexcept { return documents_.size(); }
     [[nodiscard]] std::optional<DocumentId> activeDocument() const noexcept { return active_; }
     bool setActiveDocument(DocumentId id) noexcept;
+    bool setExternalFileState(DocumentId id, ExternalFileState state) noexcept;
     CloseResult close(DocumentId id, bool discardModified = false);
 
 private:

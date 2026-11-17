@@ -5,6 +5,18 @@
 #include <utility>
 
 namespace note::documents {
+namespace {
+
+std::filesystem::path normalizedPath(const std::filesystem::path& path) {
+    std::error_code error;
+    auto result = std::filesystem::weakly_canonical(path, error);
+    if (!error) return result;
+    error.clear();
+    result = std::filesystem::absolute(path, error);
+    return (error ? path : result).lexically_normal();
+}
+
+} // namespace
 
 Document& DocumentManager::createNew() {
     auto buffer = std::make_unique<editor::TextBuffer>();
@@ -24,16 +36,12 @@ bool DocumentManager::pathAlreadyOpen(const std::filesystem::path& path) const {
 
 std::optional<DocumentId> DocumentManager::findByPath(
     const std::filesystem::path& path, std::optional<DocumentId> except) const {
-    std::error_code candidateError;
-    const auto candidate = std::filesystem::weakly_canonical(path, candidateError);
-    const auto normalizedCandidate = candidateError ? std::filesystem::absolute(path).lexically_normal() : candidate;
+    const auto normalizedCandidate = normalizedPath(path);
     for (const auto& [id, entry] : documents_) {
         if (except == id) continue;
         const auto& existingPath = entry.document->metadata().path;
         if (!existingPath) continue;
-        std::error_code existingError;
-        const auto existing = std::filesystem::weakly_canonical(*existingPath, existingError);
-        const auto normalizedExisting = existingError ? std::filesystem::absolute(*existingPath).lexically_normal() : existing;
+        const auto normalizedExisting = normalizedPath(*existingPath);
         if (normalizedCandidate == normalizedExisting) return id;
         std::error_code equivalentError;
         if (std::filesystem::equivalent(path, *existingPath, equivalentError) && !equivalentError) return id;
@@ -56,6 +64,17 @@ Document& DocumentManager::registerOpened(std::unique_ptr<editor::TextBuffer> bu
     return *it->second.document;
 }
 
+bool DocumentManager::replaceOpenedContents(DocumentId id,
+                                             std::unique_ptr<editor::TextBuffer> buffer,
+                                             DocumentMetadata metadata) {
+    const auto it = documents_.find(id);
+    if (it == documents_.end() || !buffer || !metadata.path) return false;
+    *it->second.buffer = std::move(*buffer);
+    const auto revision = it->second.buffer->revision();
+    (void)it->second.document->recordSuccessfulSave(revision, std::move(metadata));
+    return true;
+}
+
 Document* DocumentManager::find(DocumentId id) noexcept {
     const auto it = documents_.find(id);
     return it == documents_.end() ? nullptr : it->second.document.get();
@@ -67,6 +86,12 @@ const Document* DocumentManager::find(DocumentId id) const noexcept {
 bool DocumentManager::setActiveDocument(DocumentId id) noexcept {
     if (!documents_.contains(id)) return false;
     active_ = id;
+    return true;
+}
+bool DocumentManager::setExternalFileState(DocumentId id, ExternalFileState state) noexcept {
+    const auto it = documents_.find(id);
+    if (it == documents_.end()) return false;
+    it->second.document->recordExternalFileState(state);
     return true;
 }
 CloseResult DocumentManager::close(DocumentId id, bool discardModified) {

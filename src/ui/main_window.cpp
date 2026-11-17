@@ -1,10 +1,15 @@
 #include "ui/main_window.hpp"
 
 #include "documents/document.hpp"
+#include "platform/launch_services.hpp"
+#include "platform/path_resolver.hpp"
 #include "ui/document_preview.hpp"
 
 #include <QAction>
 #include <QCloseEvent>
+#include <QDragEnterEvent>
+#include <QDropEvent>
+#include <QEvent>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QHBoxLayout>
@@ -12,6 +17,7 @@
 #include <QLabel>
 #include <QMenu>
 #include <QMenuBar>
+#include <QMimeData>
 #include <QMessageBox>
 #include <QPlainTextEdit>
 #include <QPushButton>
@@ -20,6 +26,7 @@
 #include <QTabBar>
 #include <QVBoxLayout>
 #include <QWidget>
+#include <QUrl>
 
 #include <cstdint>
 #include <algorithm>
@@ -30,27 +37,6 @@
 namespace note::ui {
 namespace {
 
-QString toQString(const std::filesystem::path& path) {
-#if defined(_WIN32)
-    return QString::fromStdWString(path.native());
-#else
-    const auto value = path.u8string();
-    return QString::fromUtf8(reinterpret_cast<const char*>(value.data()),
-                             static_cast<qsizetype>(value.size()));
-#endif
-}
-
-std::filesystem::path toPath(const QString& value) {
-#if defined(_WIN32)
-    return std::filesystem::path(value.toStdWString());
-#else
-    const auto bytes = value.toUtf8();
-    return std::filesystem::path(std::u8string(
-        reinterpret_cast<const char8_t*>(bytes.constData()),
-        static_cast<std::size_t>(bytes.size())));
-#endif
-}
-
 QString fromUtf8(const std::string& value) {
     return QString::fromUtf8(value.data(), static_cast<qsizetype>(value.size()));
 }
@@ -59,6 +45,7 @@ QString fromUtf8(const std::string& value) {
 
 MainWindow::MainWindow(application::DocumentWorkflow& workflow, QWidget* parent)
     : QMainWindow(parent), workflow_(workflow) {
+    setAcceptDrops(true);
     setWindowTitle(tr("Note"));
     resize(1000, 700);
 
@@ -84,6 +71,10 @@ MainWindow::MainWindow(application::DocumentWorkflow& workflow, QWidget* parent)
     status_ = new QLabel(this);
     statusBar()->addPermanentWidget(status_);
     createActions();
+    workflow_.setExternalFileChangeCallback([this](documents::DocumentId id,
+                                                    documents::ExternalFileState state) {
+        showExternalFileChange(id, state);
+    });
 
     connect(tabs_, &QTabBar::currentChanged, this, [this](int index) {
         if (index >= 0) {
@@ -99,6 +90,8 @@ MainWindow::MainWindow(application::DocumentWorkflow& workflow, QWidget* parent)
     });
     refresh();
 }
+
+MainWindow::~MainWindow() { workflow_.setExternalFileChangeCallback({}); }
 
 void MainWindow::createActions() {
     auto* fileMenu = menuBar()->addMenu(tr("&File"));
@@ -133,14 +126,33 @@ void MainWindow::createActions() {
     connect(closeAction_, &QAction::triggered, this, [this] {
         if (const auto* active = workflow_.activeDocument()) closeDocument(active->id());
     });
+
+    fileMenu->addSeparator();
+    externalOpenAction_ = fileMenu->addAction(tr("Open in External Application"));
+    externalOpenAction_->setObjectName(QStringLiteral("openExternalApplicationAction"));
+    connect(externalOpenAction_, &QAction::triggered, this, [this] {
+        const auto* document = workflow_.activeDocument();
+        if (!document || !document->metadata().path) return;
+        const auto result = platform::openInExternalApplication(*document->metadata().path);
+        if (!result.success) showError(tr("Could not open the file externally: %1").arg(fromUtf8(result.error)));
+    });
+    terminalAction_ = fileMenu->addAction(tr("Open Terminal Here"));
+    terminalAction_->setObjectName(QStringLiteral("openTerminalAction"));
+    connect(terminalAction_, &QAction::triggered, this, [this] {
+        const auto* document = workflow_.activeDocument();
+        if (!document || !document->metadata().path) return;
+        const auto directory = document->metadata().path->parent_path();
+        const auto result = platform::openTerminalInDirectory(directory);
+        if (!result.success) showError(tr("Could not open a terminal: %1").arg(fromUtf8(result.error)));
+    });
 }
 
 QString MainWindow::displayName(const documents::Document& document) const {
     if (!document.metadata().path) {
         return tr("Untitled %1").arg(static_cast<qulonglong>(document.id()));
     }
-    const auto fileName = QFileInfo(toQString(*document.metadata().path)).fileName();
-    return fileName.isEmpty() ? toQString(*document.metadata().path) : fileName;
+    const auto fileName = QFileInfo(platform::pathToQString(*document.metadata().path)).fileName();
+    return fileName.isEmpty() ? platform::pathToQString(*document.metadata().path) : fileName;
 }
 
 void MainWindow::refresh() {
@@ -154,7 +166,7 @@ void MainWindow::refresh() {
         if (document->modified()) label += QLatin1Char('*');
         const auto index = tabs_->addTab(label);
         tabs_->setTabData(index, QVariant::fromValue<qulonglong>(id));
-        if (document->metadata().path) tabs_->setTabToolTip(index, toQString(*document->metadata().path));
+        if (document->metadata().path) tabs_->setTabToolTip(index, platform::pathToQString(*document->metadata().path));
         else tabs_->setTabToolTip(index, label);
         if (workflow_.activeDocumentId() == id) activeIndex = index;
     }
@@ -174,6 +186,9 @@ void MainWindow::refreshPresentation() {
     saveAction_->setEnabled(hasDocument);
     saveAsAction_->setEnabled(hasDocument);
     closeAction_->setEnabled(hasDocument);
+    const bool hasPath = hasDocument && document->metadata().path.has_value();
+    externalOpenAction_->setEnabled(hasPath);
+    terminalAction_->setEnabled(hasPath);
 
     if (!document) {
         setWindowTitle(tr("Note"));
@@ -191,41 +206,27 @@ void MainWindow::refreshPresentation() {
 void MainWindow::openFile() {
     const auto selected = QFileDialog::getOpenFileName(this, tr("Open File"), {}, tr("All Files (*)"));
     if (selected.isEmpty()) return;
-    openPath(toPath(selected));
+    openPath(platform::pathFromQString(selected));
 }
 
 void MainWindow::openPath(const std::filesystem::path& path) {
     const auto request = workflow_.openAsync(path,
-        [this](auto id, documents::OpenProgress update) {
-            const auto it = openProgress_.find(id);
-            if (it == openProgress_.end() || !it->second) return;
-            auto* dialog = it->second;
-            if (update.buildingIndex) {
-                dialog->setLabelText(tr("Building document index…"));
-                dialog->setRange(0, 0);
-                return;
-            }
-            dialog->setLabelText(tr("Opening file… %1 of %2 MB")
-                .arg(static_cast<qulonglong>(update.bytesRead / (1024 * 1024)))
-                .arg(static_cast<qulonglong>(update.totalBytes / (1024 * 1024))));
-            if (update.totalBytes > 0) {
-                dialog->setRange(0, 1000);
-                dialog->setValue(static_cast<int>(std::min<std::uintmax_t>(1000, update.bytesRead * 1000 / update.totalBytes)));
-            } else dialog->setRange(0, 0);
-        },
+        [this](auto id, documents::OpenProgress update) { updateOpenProgress(id, update); },
         [this](auto id, application::WorkflowResult result) {
-            if (const auto it = openProgress_.find(id); it != openProgress_.end()) {
-                if (it->second) it->second->deleteLater();
-                openProgress_.erase(it);
-            }
+            finishOpenProgress(id);
             if (result.status == application::OperationStatus::failed)
                 showError(tr("Could not open the file: %1").arg(fromUtf8(result.error)));
             if (result) refresh();
         });
     if (!request || openProgress_.contains(request)) return;
-    auto* dialog = new QProgressDialog(tr("Opening file…"), tr("Cancel"), 0, 1000, this);
+    createOpenProgress(request, tr("Opening file…"));
+}
+
+void MainWindow::createOpenProgress(application::DocumentWorkflow::OpenRequestId request,
+                                    const QString& label) {
+    auto* dialog = new QProgressDialog(label, tr("Cancel"), 0, 1000, this);
     dialog->setObjectName(QStringLiteral("openProgressDialog"));
-    dialog->setWindowTitle(tr("Opening File"));
+    dialog->setWindowTitle(label.startsWith(tr("Reloading")) ? tr("Reloading File") : tr("Opening File"));
     dialog->setWindowModality(Qt::NonModal);
     dialog->setMinimumDuration(350);
     dialog->setAutoClose(false);
@@ -238,14 +239,45 @@ void MainWindow::openPath(const std::filesystem::path& path) {
     openProgress_.emplace(request, dialog);
 }
 
+void MainWindow::updateOpenProgress(application::DocumentWorkflow::OpenRequestId id,
+                                    documents::OpenProgress update) {
+    const auto it = openProgress_.find(id);
+    if (it == openProgress_.end() || !it->second) return;
+    auto* dialog = it->second;
+    if (update.buildingIndex) {
+        dialog->setLabelText(tr("Building document index…"));
+        dialog->setRange(0, 0);
+        return;
+    }
+    dialog->setLabelText(tr("Opening file… %1 of %2 MB")
+        .arg(static_cast<qulonglong>(update.bytesRead / (1024 * 1024)))
+        .arg(static_cast<qulonglong>(update.totalBytes / (1024 * 1024))));
+    if (update.totalBytes > 0) {
+        dialog->setRange(0, 1000);
+        dialog->setValue(static_cast<int>(std::min<std::uintmax_t>(1000,
+            update.bytesRead * 1000 / update.totalBytes)));
+    } else dialog->setRange(0, 0);
+}
+
+void MainWindow::finishOpenProgress(application::DocumentWorkflow::OpenRequestId id) {
+    if (const auto it = openProgress_.find(id); it != openProgress_.end()) {
+        if (it->second) it->second->deleteLater();
+        openProgress_.erase(it);
+    }
+}
+
 void MainWindow::saveActive() {
     const auto* document = workflow_.activeDocument();
     if (!document) return;
-    auto result = workflow_.save(document->id());
+    const auto id = document->id();
+    auto result = workflow_.save(id);
     if (result.status == application::OperationStatus::needsSavePath) {
-        const auto path = requestSavePath(*document);
-        if (!path) return;
-        result = workflow_.saveAs(document->id(), *path);
+        saveDocumentAs(id);
+        return;
+    }
+    if (result.status == application::OperationStatus::conflict) {
+        showSaveConflict(id, fromUtf8(result.error));
+        return;
     }
     if (result.status == application::OperationStatus::failed) {
         showError(tr("Could not save the file: %1").arg(fromUtf8(result.error)));
@@ -257,9 +289,37 @@ void MainWindow::saveActive() {
 void MainWindow::saveActiveAs() {
     const auto* document = workflow_.activeDocument();
     if (!document) return;
+    saveDocumentAs(document->id());
+}
+
+void MainWindow::saveDocumentAs(documents::DocumentId id) {
+    const auto* document = workflow_.findDocument(id);
+    if (!document) return;
     const auto path = requestSavePath(*document);
     if (!path) return;
-    const auto result = workflow_.saveAs(document->id(), *path);
+    const auto destination = workflow_.inspectFile(*path);
+    if (!destination.error.empty()) {
+        showError(tr("Could not check the destination: %1").arg(fromUtf8(destination.error)));
+        return;
+    }
+    bool replaceExisting = false;
+    if (destination.exists) {
+        QMessageBox prompt(QMessageBox::Warning, tr("Replace Existing File"),
+            tr("A file already exists at this path. Replace it with the current document?"),
+            QMessageBox::NoButton, this);
+        auto* replaceButton = prompt.addButton(tr("Replace"), QMessageBox::DestructiveRole);
+        auto* cancelButton = prompt.addButton(QMessageBox::Cancel);
+        prompt.setDefaultButton(qobject_cast<QPushButton*>(cancelButton));
+        prompt.exec();
+        replaceExisting = prompt.clickedButton() == replaceButton;
+        if (!replaceExisting) return;
+    }
+    const auto result = workflow_.saveAs(id, *path, replaceExisting,
+        destination.exists ? std::optional{destination.metadata.sha256} : std::nullopt);
+    if (result.status == application::OperationStatus::conflict) {
+        showSaveConflict(id, fromUtf8(result.error));
+        return;
+    }
     if (result.status == application::OperationStatus::failed) {
         showError(tr("Could not save the file: %1").arg(fromUtf8(result.error)));
     } else if (result) {
@@ -270,11 +330,11 @@ void MainWindow::saveActiveAs() {
 std::optional<std::filesystem::path> MainWindow::requestSavePath(
     const documents::Document& document) {
     QString suggested;
-    if (document.metadata().path) suggested = toQString(*document.metadata().path);
+    if (document.metadata().path) suggested = platform::pathToQString(*document.metadata().path);
     const auto selected = QFileDialog::getSaveFileName(this, tr("Save File As"), suggested,
                                                         tr("All Files (*)"));
     if (selected.isEmpty()) return std::nullopt;
-    return toPath(selected);
+    return platform::pathFromQString(selected);
 }
 
 void MainWindow::closeDocument(documents::DocumentId id) {
@@ -301,7 +361,9 @@ void MainWindow::closeDocument(documents::DocumentId id) {
         }
     }
     const auto result = workflow_.close(id, choice, std::move(savePath));
-    if (result.status == application::OperationStatus::failed) {
+    if (result.status == application::OperationStatus::conflict) {
+        showSaveConflict(id, fromUtf8(result.error));
+    } else if (result.status == application::OperationStatus::failed) {
         showError(tr("Could not close the document: %1").arg(fromUtf8(result.error)));
     }
     refresh();
@@ -342,7 +404,9 @@ bool MainWindow::resolveAllDocumentsForWindowClose() {
             saved = workflow_.saveAs(id, *path);
         }
         if (!saved) {
-            showError(tr("Could not save the file: %1").arg(fromUtf8(saved.error)));
+            if (saved.status == application::OperationStatus::conflict)
+                showSaveConflict(id, fromUtf8(saved.error));
+            else showError(tr("Could not save the file: %1").arg(fromUtf8(saved.error)));
             return false;
         }
         decisions.push_back({id, application::CloseChoice::cancel});
@@ -361,6 +425,120 @@ bool MainWindow::resolveAllDocumentsForWindowClose() {
 
 void MainWindow::showError(const QString& message) {
     QMessageBox::critical(this, tr("Note"), message);
+}
+
+void MainWindow::startReload(documents::DocumentId id, bool confirmDiscardLocalChanges) {
+    const auto* document = workflow_.findDocument(id);
+    if (!document) return;
+    if (document->modified() && !confirmDiscardLocalChanges) {
+        auto* prompt = new QMessageBox(QMessageBox::Warning, tr("Discard Local Changes?"),
+            tr("This document now has unsaved local changes. Reloading will discard them. Continue?"),
+            QMessageBox::NoButton, this);
+        prompt->setAttribute(Qt::WA_DeleteOnClose);
+        auto* reload = prompt->addButton(tr("Reload and Discard"), QMessageBox::DestructiveRole);
+        prompt->addButton(tr("Keep Editing"), QMessageBox::RejectRole);
+        connect(prompt, &QMessageBox::buttonClicked, this, [this, prompt, reload, id](QAbstractButton* button) {
+            if (button == reload) startReload(id, true);
+            prompt->close();
+        });
+        prompt->open();
+        return;
+    }
+    const auto request = workflow_.reloadAsync(id, confirmDiscardLocalChanges,
+        [this](auto requestId, documents::OpenProgress update) { updateOpenProgress(requestId, update); },
+        [this](auto requestId, application::WorkflowResult result) {
+            finishOpenProgress(requestId);
+            if (result.status == application::OperationStatus::conflict)
+                showSaveConflict(*result.documentId, fromUtf8(result.error));
+            else if (result.status == application::OperationStatus::failed)
+                showError(tr("Could not reload the file: %1").arg(fromUtf8(result.error)));
+            else if (result) refresh();
+        });
+    if (!request) {
+        showError(tr("The document could not be reloaded because it changed or is no longer available."));
+        return;
+    }
+    if (!openProgress_.contains(request)) createOpenProgress(request, tr("Reloading file…"));
+}
+
+void MainWindow::showExternalFileChange(documents::DocumentId id,
+                                        documents::ExternalFileState state) {
+    if (state == documents::ExternalFileState::current) return;
+    const auto* document = workflow_.findDocument(id);
+    if (!document) return;
+    const bool missing = state == documents::ExternalFileState::missing;
+    const bool modified = document->modified();
+    auto* prompt = new QMessageBox(missing ? QMessageBox::Warning : QMessageBox::Information,
+        missing ? tr("File No Longer Available") : tr("File Changed on Disk"),
+        missing
+            ? tr("%1 was removed or moved. The open document and its contents are preserved.")
+                .arg(displayName(*document))
+            : modified
+                ? tr("%1 changed outside Note. Your unsaved local edits are preserved until you choose to reload.")
+                    .arg(displayName(*document))
+                : tr("%1 changed outside Note. Reload the latest disk contents now or later?")
+                    .arg(displayName(*document)),
+        QMessageBox::NoButton, this);
+    prompt->setAttribute(Qt::WA_DeleteOnClose);
+    QAbstractButton* primary = nullptr;
+    if (missing) primary = prompt->addButton(tr("Save As…"), QMessageBox::ActionRole);
+    else primary = prompt->addButton(modified ? tr("Reload and Discard Local Edits") : tr("Reload"),
+                                     modified ? QMessageBox::DestructiveRole : QMessageBox::AcceptRole);
+    auto* defer = prompt->addButton(missing ? tr("Keep Open") : modified ? tr("Keep Editing") : tr("Later"),
+                                    QMessageBox::RejectRole);
+    connect(prompt, &QMessageBox::buttonClicked, this,
+        [this, prompt, primary, defer, id, missing, modified](QAbstractButton* button) {
+            if (button == primary) {
+                if (missing) saveDocumentAs(id);
+                else startReload(id, modified);
+            }
+            if (button == defer || button == primary) prompt->close();
+        });
+    prompt->open();
+}
+
+void MainWindow::showSaveConflict(documents::DocumentId id, const QString& message) {
+    const auto* document = workflow_.findDocument(id);
+    if (!document) return;
+    const bool missing = document->metadata().externalFileState == documents::ExternalFileState::missing;
+    auto* prompt = new QMessageBox(QMessageBox::Warning, tr("Save Conflict"),
+        tr("%1\n\nYour in-memory contents are safe. Choose Save As to keep them at another path, or reload the disk copy explicitly.")
+            .arg(message), QMessageBox::NoButton, this);
+    prompt->setAttribute(Qt::WA_DeleteOnClose);
+    auto* saveAs = prompt->addButton(tr("Save As…"), QMessageBox::ActionRole);
+    QAbstractButton* reload = nullptr;
+    if (!missing) reload = prompt->addButton(document->modified()
+        ? tr("Reload and Discard Local Edits") : tr("Reload"), QMessageBox::DestructiveRole);
+    auto* keep = prompt->addButton(tr("Keep Current Document"), QMessageBox::RejectRole);
+    connect(prompt, &QMessageBox::buttonClicked, this,
+        [this, prompt, saveAs, reload, keep, id](QAbstractButton* button) {
+            if (button == saveAs) saveDocumentAs(id);
+            else if (button == reload) startReload(id, true);
+            if (button == saveAs || button == reload || button == keep) prompt->close();
+        });
+    prompt->open();
+}
+
+bool MainWindow::event(QEvent* event) {
+    if (event->type() == QEvent::WindowActivate || event->type() == QEvent::ApplicationActivate)
+        workflow_.checkExternalChanges();
+    return QMainWindow::event(event);
+}
+
+void MainWindow::dragEnterEvent(QDragEnterEvent* event) {
+    if (event->mimeData()->hasUrls()) event->acceptProposedAction();
+    else QMainWindow::dragEnterEvent(event);
+}
+
+void MainWindow::dropEvent(QDropEvent* event) {
+    bool openedAny = false;
+    for (const auto& url : event->mimeData()->urls()) {
+        if (!url.isLocalFile()) continue;
+        openPath(platform::pathFromQString(url.toLocalFile()));
+        openedAny = true;
+    }
+    if (openedAny) event->acceptProposedAction();
+    else QMainWindow::dropEvent(event);
 }
 
 void MainWindow::closeEvent(QCloseEvent* event) {

@@ -1,6 +1,6 @@
 # Production document data models
 
-This records the Phase 02 data ownership implemented in `src/editor/` and `src/documents/`. It does not add cursor, selection, undo, tab-order, recovery, or UI state.
+This records the Phase 02 data ownership implemented in `src/editor/` and `src/documents/`. `FileMetadata` includes a SHA-256 digest of the exact bytes last read or saved; `DocumentMetadata` tracks whether the backing file is current, externally changed, or missing. This does not add cursor, selection, undo, recovery, or UI state.
 
 ## Text buffer
 

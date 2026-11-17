@@ -3,6 +3,7 @@
 #include "editor/text_buffer.hpp"
 
 #include <cstdint>
+#include <array>
 #include <filesystem>
 #include <optional>
 
@@ -15,7 +16,11 @@ enum class FileEncoding : std::uint8_t { utf8, utf8Bom, utf16LittleEndian, utf16
 struct FileMetadata {
     std::uintmax_t byteSize{};
     std::int64_t modifiedTimeMilliseconds{};
+    std::array<std::uint8_t, 32> sha256{};
+    bool hasFingerprint{};
 };
+
+enum class ExternalFileState : std::uint8_t { current, changed, missing };
 
 struct DocumentMetadata {
     std::optional<std::filesystem::path> path;
@@ -23,6 +28,7 @@ struct DocumentMetadata {
     editor::LineEnding preferredLineEnding{editor::LineEnding::lf};
     bool mixedLineEndings{};
     std::optional<FileMetadata> file;
+    ExternalFileState externalFileState{ExternalFileState::current};
 };
 
 class DocumentManager;
@@ -43,6 +49,7 @@ private:
     friend class FileService;
     Document(DocumentId id, editor::TextBuffer& buffer, DocumentMetadata metadata);
     bool recordSuccessfulSave(std::uint64_t savedRevision, DocumentMetadata metadata);
+    void recordExternalFileState(ExternalFileState state) noexcept { metadata_.externalFileState = state; }
 
     DocumentId id_{};
     editor::TextBuffer& buffer_;

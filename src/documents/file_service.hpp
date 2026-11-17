@@ -19,7 +19,15 @@ struct OpenFileResult {
 struct FileOperationResult {
     bool success{};
     std::string error;
+    bool conflict{};
+    bool missing{};
     [[nodiscard]] explicit operator bool() const noexcept { return success; }
+};
+
+struct FileInspection {
+    bool exists{};
+    FileMetadata metadata;
+    std::string error;
 };
 
 struct OpenProgress {
@@ -39,8 +47,11 @@ class FileService final {
 public:
     [[nodiscard]] OpenFileResult open(const std::filesystem::path& path) const;
     [[nodiscard]] OpenFileResult open(const std::filesystem::path& path, const OpenOptions& options) const;
+    [[nodiscard]] FileInspection inspect(const std::filesystem::path& path) const;
     [[nodiscard]] FileOperationResult save(Document& document) const;
-    [[nodiscard]] FileOperationResult saveAs(Document& document, const std::filesystem::path& path) const;
+    [[nodiscard]] FileOperationResult saveAs(Document& document, const std::filesystem::path& path,
+                                              bool allowOverwrite = false,
+                                              std::optional<std::array<std::uint8_t, 32>> expectedTargetFingerprint = std::nullopt) const;
 };
 
 } // namespace note::documents

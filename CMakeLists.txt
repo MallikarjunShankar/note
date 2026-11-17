@@ -14,15 +14,18 @@ add_library(note_core
     src/documents/document_manager.cpp
     src/documents/tab_manager.cpp
     src/documents/file_service.cpp
+    src/platform/path_resolver.cpp
 )
 target_include_directories(note_core PUBLIC src)
 target_link_libraries(note_core PUBLIC Qt6::Core)
 
 add_library(note_app_core
     src/application/document_workflow.cpp
+    src/platform/file_monitor.cpp
+    src/platform/launch_services.cpp
 )
 target_include_directories(note_app_core PUBLIC src)
-target_link_libraries(note_app_core PUBLIC note_core)
+target_link_libraries(note_app_core PUBLIC note_core Qt6::Gui)
 
 qt_add_executable(note
     src/main.cpp
