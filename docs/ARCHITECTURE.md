@@ -25,8 +25,14 @@ The recommendation is technically informed but still provisional: measurements u
 ## Initial structure
 
 - `src/main.cpp`: minimal Qt application shell only.
+- `src/editor/text_buffer.*`: framework-independent UTF-8 piece-table buffer with an indexed implicit-treap piece sequence and newline metadata.
+- `src/documents/`: document metadata/manager and Qt Core file service using atomic `QSaveFile` writes.
 - `CMakeLists.txt`: C++20 executable and Qt Widgets dependency.
 - `benchmarks/editor_prototype/`: isolated editor and buffer experiments, not production code.
+- `benchmarks/document_foundation/`: production buffer/file-service comparison harness.
+- `tests/documents/`: deterministic document subsystem tests.
 - `docs/`: decisions, measurements, boundaries, and implementation sequence.
+
+Phase 02 implementation details and measurements are in [`DATA_MODELS.md`](DATA_MODELS.md), [`INTERFACES.md`](INTERFACES.md), and [`PERFORMANCE.md`](PERFORMANCE.md). The file service currently loads synchronously; progressive/background loading and UI integration remain outside this milestone.
 
 Add directories only when the first real component in that system is implemented. This follows the specification's warning against empty scaffolding.

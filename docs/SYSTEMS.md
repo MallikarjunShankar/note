@@ -18,3 +18,9 @@ The ten systems below follow section 5 of `PROJECT_SPEC.md`. This is a boundary 
 Authoritative state ownership: text buffer owns text; cursor manager owns cursors; selection manager owns selections; undo/redo manager owns history; document manager owns document metadata/references; tab manager owns tab order; language system owns language identity; highlighter owns syntax state; theme/settings/keybinding managers own their respective data; command registry owns commands; session manager owns session data; recovery manager owns snapshots; document management owns file persistence.
 
 All systems are added incrementally as concrete requirements need them. No empty system modules are part of this foundation.
+
+## Phase 02 implementation boundary
+
+Production `editor::TextBuffer` now stores canonical UTF-8 using an indexed piece table; it owns text and line-ending tags and has no Qt dependency. Document Management contains `Document`, `DocumentManager`, and a Qt Core `FileService` with UTF-8/BOM and BOM-marked UTF-16 handling and `QSaveFile` persistence. The manager owns document and buffer lifetimes; documents hold non-owning buffer references and file metadata only. These interfaces and lifetime constraints are specified in [`INTERFACES.md`](INTERFACES.md) and [`DATA_MODELS.md`](DATA_MODELS.md).
+
+The production subsystem remains partial: there is no tab-order/UI integration, native file dialog flow, asynchronous/progressive open, external-modification detection, or recovery. Do not move file I/O into the Editor Engine or make the Document Manager a tab-bar implementation.

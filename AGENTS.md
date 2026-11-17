@@ -47,6 +47,6 @@
 
 ## Current foundation
 
-- C++20, Qt 6 Widgets, and CMake are the selected foundation for continued development. The project-owned editor with a piece-table model is the provisional recommendation, based on the isolated prototype and host measurements in `docs/EDITOR_PROTOTYPE.md`.
-- The production application remains a bare window shell with no editor features. Its build passes on the current Windows/Qt 6.9.1 environment. The separate prototype is not production functionality, and its offscreen measurements do not establish the provisional low-end budget or cross-platform readiness.
+- C++20, Qt 6 Widgets/Core, and CMake are the selected foundation for continued development. The project-owned editor with an indexed piece-table model remains provisional, based on the isolated prototype and production measurements in `docs/EDITOR_PROTOTYPE.md` and `docs/PERFORMANCE.md`.
+- The production application remains a minimal window shell. Phase 02 now provides the production UTF-8 text buffer, document model/manager, Qt Core file service, automated tests, and a separate benchmark target; it does not yet provide an editing UI, tab system, progressive loading, or full document-management UX. The separate viewport prototype is not production functionality, and neither prototype nor current-host measurements establish the provisional low-end budget or cross-platform readiness.
 - Consult `docs/STATUS.md` for the authoritative implementation status.

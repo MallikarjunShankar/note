@@ -8,7 +8,7 @@ The specification identifies ten decisions as open. Current recommendation and r
 | GUI framework | Qt 6 Widgets (selected for the foundation) | Qt 6.9.1 shell/prototype builds on Windows. Cross-platform deployment and reference-device performance remain. |
 | Text editing | Project-owned Editor Engine and viewport renderer (recommended) | Isolated prototype passes basic interaction checks. Production behavior and low-end performance remain unvalidated; QScintilla was not benchmarked. |
 | Text rendering | Custom viewport widget backed by Qt text/drawing primitives | Plain text, selection, caret and scrolling prototype validated offscreen. Wrapping, syntax spans, and real-display timing remain. |
-| Text buffer | Piece-table model selected provisionally; prototype uses a flat descriptor vector | Gap vs piece results are in `docs/EDITOR_PROTOTYPE.md`. Production should use an indexed balanced piece sequence; validate fragmentation and index costs on reference hardware. |
+| Text buffer | Indexed piece table with an implicit treap and source-backed newline indexes selected provisionally | Five-run gap/flat-piece/treap comparisons at 1/10/50/100 MiB are recorded in `docs/PERFORMANCE.md`. The tree had low random-edit and line-query latency under 1,000 random edits but higher construction and index memory than the flat table. Worst-case treap depth, allocator RSS, reference-device behavior, and alternate tree implementations remain unvalidated. |
 | Syntax highlighting | Data-defined language rules with incremental line-based processing is the product constraint | Select or implement a tokenizer only after checking language coverage, worst-case behavior, and data-driven extensions. Do not adopt an analysis/LSP stack. |
 | Configuration format | Undecided | Choose a small, validated format suitable for app-owned settings; no requirement for human-editable files. |
 | Theme format | Data-only format, distinct from settings; exact encoding undecided | Choose stable versioning and safe defaults for missing/invalid values. |
@@ -17,7 +17,9 @@ The specification identifies ten decisions as open. Current recommendation and r
 
 ## Benchmark gate
 
-The editor architecture prototype is complete on this Windows host; see `docs/EDITOR_PROTOTYPE.md` for the actual setup, tests, and measurements. Before claiming the performance budget, name the low-end reference device and record true cold start, idle memory, keystroke-to-screen latency, real-display scrolling/rendering, and progressive opening of a 50 MiB file. Validate Linux/macOS builds and confirm the balanced piece/line index under fragmentation. Section 7.0 targets remain provisional until the project owner confirms them.
+The editor architecture prototype is complete on this Windows host; see `docs/EDITOR_PROTOTYPE.md` for the actual setup, tests, and measurements. Before claiming the performance budget, name the low-end reference device and record true cold start, idle memory, keystroke-to-screen latency, real-display scrolling/rendering, and progressive opening of a 50 MiB file. Validate Linux/macOS builds and exercise the production treap under high fragmentation; compare a worst-case-balanced tree if depth or tail latency is unstable. Section 7.0 targets remain provisional until the project owner confirms them.
+
+The production document foundation now has a five-run Release benchmark comparison and deterministic unit tests. These results help choose an indexed piece-table model but do not validate the low-end budget. `TextBuffer` uses UTF-8 byte offsets with scalar-boundary validation and canonical LF plus per-newline encoding metadata; see `docs/DATA_MODELS.md` and `docs/INTERFACES.md`.
 
 ## Hardware and performance budget status
 

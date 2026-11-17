@@ -76,4 +76,32 @@ Keep the procedure, fixture generator, seeds, build configuration, and instrumen
 
 [`EDITOR_PROTOTYPE.md`](EDITOR_PROTOTYPE.md) records actual isolated prototype measurements: 50 MiB progressive line indexing median 193 ms, process launch to first-content log median 176.6 ms over 10 runs (a launch proxy, not cold start to a typeable window), synthetic 50 MiB key-to-paint median-run median 2.89 ms, offscreen scroll/paint timings, and small-file idle memory of 24.6 MiB working set / 38.7 MiB private bytes. These are prototype results on the described host and offscreen plugin. They do not establish production performance, true input-to-photon or real-display scrolling, the minimum hardware target, or Linux/macOS compatibility. The 50 MiB document memory was not represented by the small-file idle-memory sample.
 
-Physical low-end hardware, true cold startup, real-display frame pacing, production behavior, 100 MB scenarios, tab-count stress, long-line thresholds, and cross-platform release builds remain outstanding.
+Physical low-end hardware, true cold startup, real-display frame pacing, editor-UI responsiveness during opening, multi-tab stress, long-line thresholds, and cross-platform release builds remain outstanding. Production buffer and File Service components have been exercised at 1/10/50/100 MiB below; those runs do not provide progressive-open or UI responsiveness evidence.
+
+## Phase 02 document foundation benchmarks
+
+`benchmarks/document_foundation/document_bench.cpp` compares the flat gap buffer and flat piece table from the earlier prototype with the production indexed piece treap, and measures the production File Service. Each size was run five times in a Release build using GCC 15.2.0 (`-O2`), CMake 4.1.0/Ninja 1.13.0, Qt 6.9.1 Core, on Windows NT 10.0.26300.0 with 16 logical processors exposed. CPU model, physical RAM, display, and storage device were unavailable. Fixtures were deterministic ASCII source-like data with 61-byte lines and a final fill; file reads followed fixture creation with warm OS caches. Values below are medians of five runs. Per-operation p95 is computed from the deterministic operations within a run; for the file/open/build/save columns the table reports medians across runs.
+
+| Fixture | Indexed buffer build | Estimated indexed storage after edits | FileService open | Atomic Save As | Random insert p95 | Random delete p95 | 64 KiB range read p95 | Line lookup p95 |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 MiB | 3.057 ms | 1.964 MiB | 16.601 ms | 4.824 ms | 0.003 ms | 0.004 ms | 0.008 ms | 0.001 ms |
+| 10 MiB | 29.178 ms | 12.933 MiB | 64.442 ms | 13.354 ms | 0.004 ms | 0.004 ms | 0.005 ms | 0.001 ms |
+| 50 MiB | 145.309 ms | 59.683 MiB | 288.714 ms | 63.826 ms | 0.005 ms | 0.005 ms | 0.004 ms | 0.001 ms |
+| 100 MiB | 288.446 ms | 118.683 MiB | 564.750 ms | 108.128 ms | 0.005 ms | 0.005 ms | 0.005 ms | 0.001 ms |
+
+Each run included 200 sequential character insertions and removal, 200 local insert/delete pairs, a 256 KiB paste/delete, 1,000 random insertions followed by 1,000 independent random deletions, 100 range reads, and (for the production buffer) 1,000 indexed line lookups. Reported storage is the buffer's payload estimate, including source capacities, newline offsets/tags, and piece-node sizes; it excludes allocator overhead and is not process RSS. The two prototype candidates expose no indexed line lookup, so that comparison is production-only.
+
+| Fixture | Candidate | Build | Estimated storage | 256 KiB paste/delete | Random insert p95 | Random delete p95 | 64 KiB read p95 |
+|---:|---|---:|---:|---:|---:|---:|---:|
+| 50 MiB | Flat gap | 12.152 ms | 100.008 MiB | 22.152 ms | 2.672 ms | 2.598 ms | 0.124 ms |
+| 50 MiB | Flat piece table | 6.369 ms | 50.849 MiB | 0.065 ms | 0.003 ms | 0.009 ms | 0.006 ms |
+| 50 MiB | Indexed piece treap | 145.309 ms | 59.683 MiB | 0.691 ms | 0.005 ms | 0.005 ms | 0.004 ms |
+| 100 MiB | Flat gap | 23.980 ms | 200.008 MiB | 43.407 ms | 5.249 ms | 5.228 ms | 0.134 ms |
+| 100 MiB | Flat piece table | 12.712 ms | 101.631 MiB | 0.049 ms | 0.003 ms | 0.009 ms | 0.006 ms |
+| 100 MiB | Indexed piece treap | 288.446 ms | 118.683 MiB | 0.764 ms | 0.005 ms | 0.005 ms | 0.005 ms |
+
+The gap buffer performs well for local edits but moves large spans for distant edits. The flat piece table has the lowest measured build cost and storage, and very fast random edits in this 1,000-edit workload, but has no scalable piece/line index and its prototype operations scan descriptors. The indexed treap pays for UTF-8 validation, normalization, newline metadata, and indexed structure construction; in exchange it exposes logarithmic expected piece/line queries and keeps random edit costs low under the measured fragmentation. This evidence supports the current provisional production choice, not a proven advantage over a balanced AVL/B-tree sequence or a guarantee under adversarial fragmentation.
+
+An additional five-run 8 MiB single-line fixture checks behavior when there are no line breaks. Median build times were 2.123 ms for the gap buffer, 1.068 ms for the flat piece table, and 22.539 ms for the indexed treap. The treap reported one line, 8.683 MiB estimated storage, 0.001 ms p95 for its 1,000 random inserts and deletes, and 0.005 ms p95 for 64 KiB range reads. This fixture measures buffer/index behavior only; it does not measure shaping, painting, or interactive navigation across an extreme line.
+
+The File Service numbers measure synchronous full-file opening and atomic save on this warm-cache host. They do not show that the application remains responsive while opening: there is no editor UI, background worker, progressive document publication, or allocator/RSS sampling in this milestone. The current open implementation reads and decodes the complete file before returning. No key-to-screen, scrolling, idle-memory, 4 GB device, HDD, or product performance budget claim follows from these results.
