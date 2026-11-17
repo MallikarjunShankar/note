@@ -1,0 +1,204 @@
+#include "application/document_workflow.hpp"
+
+#include <QFile>
+#include <QTemporaryDir>
+
+#include <filesystem>
+#include <iostream>
+#include <stdexcept>
+#include <string>
+
+namespace {
+
+void require(bool condition, const char* message) {
+    if (!condition) throw std::runtime_error(message);
+}
+
+std::filesystem::path pathFromQString(const QString& value) {
+#if defined(_WIN32)
+    return std::filesystem::path(value.toStdWString());
+#else
+    const auto bytes = value.toUtf8();
+    return std::filesystem::path(std::u8string(
+        reinterpret_cast<const char8_t*>(bytes.constData()),
+        static_cast<std::size_t>(bytes.size())));
+#endif
+}
+
+void writeFile(const std::filesystem::path& path, const QByteArray& bytes) {
+#if defined(_WIN32)
+    const auto qpath = QString::fromStdWString(path.native());
+#else
+    const auto value = path.u8string();
+    const auto qpath = QString::fromUtf8(reinterpret_cast<const char*>(value.data()),
+                                         static_cast<qsizetype>(value.size()));
+#endif
+    QFile file(qpath);
+    require(file.open(QIODevice::WriteOnly), "could not create test file");
+    require(file.write(bytes) == bytes.size(), "could not write test file");
+}
+
+QByteArray readFile(const std::filesystem::path& path) {
+#if defined(_WIN32)
+    const auto qpath = QString::fromStdWString(path.native());
+#else
+    const auto value = path.u8string();
+    const auto qpath = QString::fromUtf8(reinterpret_cast<const char*>(value.data()),
+                                         static_cast<qsizetype>(value.size()));
+#endif
+    QFile file(qpath);
+    require(file.open(QIODevice::ReadOnly), "could not read test file");
+    return file.readAll();
+}
+
+void testCreateOpenSwitchAndDuplicate() {
+    using namespace note::application;
+    QTemporaryDir temporary;
+    require(temporary.isValid(), "temporary directory unavailable");
+    const auto filePath = pathFromQString(temporary.filePath(QStringLiteral("source.txt")));
+    writeFile(filePath, QByteArray("opened text", 11));
+
+    DocumentWorkflow workflow;
+    auto& first = workflow.createNew();
+    auto& second = workflow.createNew();
+    require(first.id() != second.id(), "untitled document identities must differ");
+    require(workflow.tabs().size() == 2 && workflow.tabs().at(0) == first.id() &&
+            workflow.tabs().at(1) == second.id(), "new documents append in tab order");
+    require(workflow.activeDocument() == &second, "new document becomes active");
+    require(workflow.activate(first.id()) && workflow.activeDocument() == &first,
+            "switching changes active identity without recreating the document");
+
+    const auto opened = workflow.open(filePath);
+    require(opened.status == OperationStatus::success && opened.documentId,
+            "open registers the file");
+    const auto openedId = *opened.documentId;
+    auto* openedDocument = workflow.findDocument(openedId);
+    require(openedDocument && openedDocument->buffer().text() == "opened text" &&
+            workflow.activeDocument() == openedDocument, "opened document active with contents");
+    const auto tabCount = workflow.tabs().size();
+    require(static_cast<bool>(workflow.activate(first.id())),
+            "switch to another document before duplicate open");
+    const auto duplicate = workflow.open(filePath);
+    require(duplicate.status == OperationStatus::alreadyOpen && duplicate.documentId == openedId,
+            "opening an already open path activates its existing document");
+    require(workflow.tabs().size() == tabCount && workflow.documentCount() == tabCount,
+            "duplicate open must not create another tab or document");
+
+    const auto missingPath = pathFromQString(temporary.filePath(QStringLiteral("missing.txt")));
+    const auto badOpen = workflow.open(missingPath);
+    require(badOpen.status == OperationStatus::failed && workflow.tabs().size() == tabCount,
+            "failed open must not leave a tab or document");
+    const auto cancelledOpen = workflow.open({});
+    require(cancelledOpen.status == OperationStatus::cancelled && workflow.tabs().size() == tabCount,
+            "empty open path represents cancellation without state change");
+}
+
+void testSaveAsCollisionAndCloseChoices() {
+    using namespace note::application;
+    QTemporaryDir temporary;
+    require(temporary.isValid(), "temporary directory unavailable");
+    const auto firstPath = pathFromQString(temporary.filePath(QStringLiteral("first.txt")));
+    const auto secondPath = pathFromQString(temporary.filePath(QStringLiteral("second.txt")));
+    const auto existingTarget = pathFromQString(temporary.filePath(QStringLiteral("existing-target.txt")));
+    writeFile(firstPath, QByteArray("one", 3));
+    writeFile(secondPath, QByteArray("two", 3));
+    writeFile(existingTarget, QByteArray("old target", 10));
+
+    DocumentWorkflow workflow;
+    const auto openedFirst = workflow.open(firstPath);
+    const auto openedSecond = workflow.open(secondPath);
+    require(openedFirst && openedSecond && workflow.tabs().size() == 2,
+            "open two documents for save collision checks");
+    const auto firstId = *openedFirst.documentId;
+    const auto secondId = *openedSecond.documentId;
+    auto* first = workflow.findDocument(firstId);
+    first->buffer().insert(first->buffer().sizeBytes(), " changed");
+    require(first->modified(), "editing marks document modified");
+
+    const auto collision = workflow.saveAs(firstId, secondPath);
+    require(collision.status == OperationStatus::failed && first->metadata().path == firstPath &&
+            readFile(secondPath) == QByteArray("two", 3),
+            "Save As collision leaves both documents and destination unchanged");
+    require(workflow.saveAs(firstId, {}) .status == OperationStatus::cancelled && first->modified(),
+            "cancelled Save As leaves modified document unchanged");
+
+    const auto cancelledClose = workflow.close(firstId, CloseChoice::cancel);
+    require(cancelledClose.status == OperationStatus::cancelled && workflow.findDocument(firstId) == first &&
+            workflow.tabs().contains(firstId), "cancel close preserves document and tab");
+
+    const auto replaceExisting = workflow.saveAs(firstId, existingTarget);
+    require(replaceExisting.status == OperationStatus::success && !first->modified() &&
+            first->metadata().path == existingTarget && readFile(existingTarget) == QByteArray("one changed", 11),
+            "Save As atomically replaces an existing destination and updates association after success");
+    first->buffer().insert(first->buffer().sizeBytes(), " again");
+    const auto closeAfterCancel = workflow.close(firstId, CloseChoice::cancel);
+    require(closeAfterCancel.status == OperationStatus::cancelled && workflow.tabs().contains(firstId),
+            "cancel close still preserves document after a successful Save As");
+    const auto closeAfterSave = workflow.close(firstId, CloseChoice::save);
+    require(closeAfterSave.status == OperationStatus::success && !workflow.findDocument(firstId) &&
+            !workflow.tabs().contains(firstId) && readFile(existingTarget) == QByteArray("one changed again", 17),
+            "successful save closes the document and persists its content");
+    require(workflow.activeDocument() && workflow.activeDocument()->id() == secondId,
+            "closing active tab selects its remaining neighbor");
+
+    auto* second = workflow.findDocument(secondId);
+    second->buffer().insert(0, "edited ");
+    const auto discarded = workflow.close(secondId, CloseChoice::discard);
+    require(discarded.status == OperationStatus::success && workflow.documentCount() == 0 &&
+            workflow.tabs().size() == 0 && !workflow.activeDocument(),
+            "discard closes final tab and clears active document");
+    require(readFile(secondPath) == QByteArray("two", 3), "discard does not persist unsaved text");
+}
+
+void testSaveFailureOnCloseAndUntitledSave() {
+    using namespace note::application;
+    QTemporaryDir temporary;
+    require(temporary.isValid(), "temporary directory unavailable");
+    const auto path = pathFromQString(temporary.filePath(QStringLiteral("replace-me.txt")));
+    writeFile(path, QByteArray("original", 8));
+
+    DocumentWorkflow workflow;
+    const auto opened = workflow.open(path);
+    require(static_cast<bool>(opened), "open document for failed save close");
+    const auto id = *opened.documentId;
+    auto* document = workflow.findDocument(id);
+    document->buffer().insert(document->buffer().sizeBytes(), " modified");
+    std::filesystem::remove(path);
+    std::filesystem::create_directory(path);
+    const auto failed = workflow.close(id, CloseChoice::save);
+    require(failed.status == OperationStatus::failed && workflow.findDocument(id) == document &&
+            document->modified() && workflow.tabs().contains(id),
+            "save failure during close leaves dirty document and tab intact");
+
+    auto& untitled = workflow.createNew();
+    untitled.buffer().insert(0, "new document");
+    const auto noPath = workflow.close(untitled.id(), CloseChoice::save);
+    require(noPath.status == OperationStatus::needsSavePath && workflow.tabs().contains(untitled.id()),
+            "untitled Save choice asks caller for Save As path");
+    const auto cancelSaveAs = workflow.close(untitled.id(), CloseChoice::save, std::filesystem::path{});
+    require(cancelSaveAs.status == OperationStatus::cancelled && workflow.tabs().contains(untitled.id()) &&
+            untitled.modified(), "cancelled untitled Save As keeps document open");
+    const auto savePath = pathFromQString(temporary.filePath(QStringLiteral("new.txt")));
+    const auto closeAfterSave = workflow.close(untitled.id(), CloseChoice::save, savePath);
+    require(closeAfterSave.status == OperationStatus::success && readFile(savePath) == QByteArray("new document", 12),
+            "untitled document is saved before closing");
+
+    const auto discard = workflow.close(id, CloseChoice::discard);
+    require(discard.status == OperationStatus::success && workflow.documentCount() == 0,
+            "discard after save failure safely closes modified document");
+}
+
+} // namespace
+
+int main() {
+    try {
+        testCreateOpenSwitchAndDuplicate();
+        testSaveAsCollisionAndCloseChoices();
+        testSaveFailureOnCloseAndUntitledSave();
+        std::cout << "All document workflow tests passed.\n";
+        return 0;
+    } catch (const std::exception& error) {
+        std::cerr << "Document workflow test failure: " << error.what() << '\n';
+        return 1;
+    }
+}

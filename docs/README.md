@@ -4,7 +4,7 @@
 
 ## Current state
 
-The repository began with only the project specification. The CMake C++20/Qt 6 Widgets shell now builds on the current Windows environment. The production document foundation is implemented with automated tests and a benchmark harness, but remains partial pending UI integration, progressive file opening, and cross-platform/reference-device validation. The isolated editor prototype and all current performance numbers remain research evidence, not production guarantees or proof of the low-end budget.
+The CMake C++20/Qt 6 Widgets application now provides basic document and tab lifecycle workflows over the production document foundation. It remains partial: the central view is a bounded, read-only preview, opening is synchronous, and progressive opening plus cross-platform/reference-device validation remain outstanding. The isolated editor prototype and all current performance numbers remain research evidence, not production guarantees or proof of the low-end budget.
 
 ## Documents
 

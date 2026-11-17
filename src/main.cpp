@@ -1,11 +1,12 @@
-﻿#include <QApplication>
-#include <QMainWindow>
+﻿#include "application/document_workflow.hpp"
+#include "ui/main_window.hpp"
+
+#include <QApplication>
 
 int main(int argc, char* argv[]) {
     QApplication application(argc, argv);
-    QMainWindow window;
-    window.setWindowTitle(QStringLiteral("Note"));
-    window.resize(1000, 700);
+    note::application::DocumentWorkflow workflow;
+    note::ui::MainWindow window(workflow);
     window.show();
     return application.exec();
 }

@@ -24,15 +24,18 @@ The recommendation is technically informed but still provisional: measurements u
 
 ## Initial structure
 
-- `src/main.cpp`: minimal Qt application shell only.
+- `src/main.cpp`: starts the Qt application and owns the `DocumentWorkflow` service lifetime.
+- `src/application/document_workflow.*`: coordinates document creation/open/save/close, the Document Manager, and tab order without owning document content.
+- `src/ui/main_window.*`: minimal File menu, Qt actions/shortcuts, native dialogs, tab bar, close prompts, and status presentation.
+- `src/ui/document_preview.*`: bounded, read-only projection of the active buffer for lifecycle demonstration; not the production editor view.
 - `src/editor/text_buffer.*`: framework-independent UTF-8 piece-table buffer with an indexed implicit-treap piece sequence and newline metadata.
-- `src/documents/`: document metadata/manager and Qt Core file service using atomic `QSaveFile` writes.
+- `src/documents/`: document metadata/manager, ID-only `TabManager`, and Qt Core file service using atomic `QSaveFile` writes.
 - `CMakeLists.txt`: C++20 executable and Qt Widgets dependency.
 - `benchmarks/editor_prototype/`: isolated editor and buffer experiments, not production code.
 - `benchmarks/document_foundation/`: production buffer/file-service comparison harness.
 - `tests/documents/`: deterministic document subsystem tests.
 - `docs/`: decisions, measurements, boundaries, and implementation sequence.
 
-Phase 02 implementation details and measurements are in [`DATA_MODELS.md`](DATA_MODELS.md), [`INTERFACES.md`](INTERFACES.md), and [`PERFORMANCE.md`](PERFORMANCE.md). The file service currently loads synchronously; progressive/background loading and UI integration remain outside this milestone.
+Phase 02 implementation details and measurements are in [`DATA_MODELS.md`](DATA_MODELS.md), [`INTERFACES.md`](INTERFACES.md), and [`PERFORMANCE.md`](PERFORMANCE.md). Basic document/tab UI integration is in place. File opening remains synchronous and currently occurs from the UI workflow; progressive/background loading, production editing, recovery, and cross-platform/reference-device validation remain outstanding.
 
 Add directories only when the first real component in that system is implemented. This follows the specification's warning against empty scaffolding.

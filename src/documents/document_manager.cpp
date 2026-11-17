@@ -19,21 +19,26 @@ Document& DocumentManager::createNew() {
 }
 
 bool DocumentManager::pathAlreadyOpen(const std::filesystem::path& path) const {
+    return findByPath(path).has_value();
+}
+
+std::optional<DocumentId> DocumentManager::findByPath(
+    const std::filesystem::path& path, std::optional<DocumentId> except) const {
     std::error_code candidateError;
     const auto candidate = std::filesystem::weakly_canonical(path, candidateError);
     const auto normalizedCandidate = candidateError ? std::filesystem::absolute(path).lexically_normal() : candidate;
     for (const auto& [id, entry] : documents_) {
-        (void)id;
+        if (except == id) continue;
         const auto& existingPath = entry.document->metadata().path;
         if (!existingPath) continue;
         std::error_code existingError;
         const auto existing = std::filesystem::weakly_canonical(*existingPath, existingError);
         const auto normalizedExisting = existingError ? std::filesystem::absolute(*existingPath).lexically_normal() : existing;
-        if (normalizedCandidate == normalizedExisting) return true;
+        if (normalizedCandidate == normalizedExisting) return id;
         std::error_code equivalentError;
-        if (std::filesystem::equivalent(path, *existingPath, equivalentError) && !equivalentError) return true;
+        if (std::filesystem::equivalent(path, *existingPath, equivalentError) && !equivalentError) return id;
     }
-    return false;
+    return std::nullopt;
 }
 
 Document& DocumentManager::registerOpened(std::unique_ptr<editor::TextBuffer> buffer,

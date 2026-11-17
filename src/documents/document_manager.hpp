@@ -17,6 +17,9 @@ public:
     Document& registerOpened(std::unique_ptr<editor::TextBuffer> buffer, DocumentMetadata metadata);
     [[nodiscard]] Document* find(DocumentId id) noexcept;
     [[nodiscard]] const Document* find(DocumentId id) const noexcept;
+    [[nodiscard]] std::optional<DocumentId> findByPath(
+        const std::filesystem::path& path,
+        std::optional<DocumentId> except = std::nullopt) const;
     [[nodiscard]] std::size_t size() const noexcept { return documents_.size(); }
     [[nodiscard]] std::optional<DocumentId> activeDocument() const noexcept { return active_; }
     bool setActiveDocument(DocumentId id) noexcept;

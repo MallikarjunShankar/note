@@ -14,6 +14,15 @@ These are the small Phase 02 interfaces available under `src/`. Qt is confined t
 - `Document::buffer()` provides a reference; the manager owns its lifetime. `Document::metadata()` is read-only. `modified()` compares text revision with the last successful save revision.
 - `DocumentManager::createNew()` creates an untitled, empty document. `registerOpened(buffer, metadata)` takes ownership of a file-loaded buffer and metadata, rejecting null buffers, pathless opens, and duplicate open paths.
 - `find(id)`, `setActiveDocument(id)`, `activeDocument()`, `size()`, and `close(id, discardModified)` manage document lookup/lifetime. Closing a dirty document requires explicit discard; there is no UI prompt here.
+- `findByPath(path, except)` returns the already registered identity for canonical/equivalent paths. It lets Open activate an existing instance and lets Save As reject a path owned by a different open document.
+
+## Tab manager and application workflow
+
+- `documents::TabManager` stores a stable ordered list of document IDs and provides add/remove/index lookup. It owns no documents, active state, metadata, or contents.
+- `application::DocumentWorkflow` coordinates the existing manager, tab order and file service. It provides create, open, activate, save, Save As, and close operations with explicit success, duplicate, cancellation, missing-path, not-found, and failure statuses.
+- Closing a dirty document requires a caller-supplied Save/Discard/Cancel choice. Save As for an untitled document requires a path; empty paths represent cancellation. Save failures and open errors do not remove tabs or mark content saved.
+- The Qt Main Window owns dialog and prompt presentation only. Its menu and keyboard shortcuts use the same `QAction` connections. There is no command registry in the current foundation, so no parallel command system is introduced.
+- `ui::DocumentPreview` shows at most 16 KiB from the active document in a read-only widget. It is a temporary UI projection, never a source of text edits or document persistence.
 
 ## File service (`documents::FileService`)
 

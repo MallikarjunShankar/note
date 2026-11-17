@@ -23,3 +23,9 @@ The modified state is derived from the buffer's monotonically increasing revisio
 `DocumentManager` owns each open `Document` and its `TextBuffer` in one entry. The document's buffer reference is valid only while that entry remains registered. A close request for modified content returns `confirmationRequired` unless the caller explicitly chooses to discard. The manager assigns IDs and rejects a second registration for the same existing filesystem path. It tracks one active document ID but does not own tab ordering.
 
 `FileService` returns an opened buffer and metadata; callers transfer both to `DocumentManager` when registration succeeds. Buffer text, document metadata, open-document ownership, and file persistence each have one owner.
+
+## Tabs and application workflow
+
+`TabManager` owns only the ordered list of `DocumentId` values. It stores no `Document`, path, title, modified flag, or text. `DocumentManager` remains the lifetime owner and authoritative active-document owner. The application `DocumentWorkflow` coordinates create/open/save/close operations across the manager, tab list, and `FileService`; it does not mirror document state. Closing the active tab selects the tab now at the same position, or the previous final tab, and closing the last tab clears active identity.
+
+The UI derives tab labels and modified indicators from the document model each time it synchronizes. Its temporary preview holds only a bounded 16 KiB display projection; the buffer remains authoritative. The preview is read-only and is scheduled to be replaced by the production Editor View.
