@@ -1,15 +1,15 @@
 # Editor implementation evaluation
 
-**Status:** comparative review completed; runtime benchmarks not run.
+**Status:** initial candidate review completed. The project-owned candidate has since been prototyped and measured; see [`EDITOR_PROTOTYPE.md`](EDITOR_PROTOTYPE.md). QScintilla runtime comparison remains unrun.
 **Scope:** a project-owned editor with a custom viewport renderer, compared with Scintilla integrated through QScintilla and Qt 6. No complete editor or document-management implementation is included in this evaluation.
 
 ## Executive recommendation
 
 **Recommendation: keep C++20 and Qt 6, and proceed with a project-owned editor engine and viewport renderer, subject to a focused prototype before committing to its buffer design.** This is the more demanding path, but it aligns directly with Note's ownership and rendering boundaries, gives the project control over its buffer and theme model, and avoids making QScintilla's version and licensing constraints part of the product foundation.
 
-Treat this as an architecture recommendation, not a demonstrated performance win. The project-owned path has the highest implementation and maintenance cost, and may not be the fastest way to reach a usable editor. If the immediate project objective changes to reducing time-to-usable-editor, QScintilla remains a credible alternative only after a license decision, a real Qt 6 build, and a documented adjustment to how the Editor Engine and Drawing Surface boundaries are implemented.
+Treat this as an architecture recommendation, not a demonstrated performance win over QScintilla. The project-owned prototype establishes feasibility on one host, but the project-owned path has the highest implementation and maintenance cost and may not be the fastest way to reach a usable editor. If the project later reopens the decision, QScintilla remains an alternative only after a license decision, a real Qt 6 build, and a documented adjustment to how the Editor Engine and Drawing Surface boundaries are implemented.
 
-**No timing or memory numbers are reported.** The required reference low-end device has not been named, and this environment has CMake and a C++ compiler but no Qt 6 or QScintilla installation. Comparing source-level capabilities is practical; a fair GUI benchmark is not. Installing a GUI stack or substituting a non-GUI microbenchmark would not produce comparable evidence. The performance targets in section 7.0 remain provisional.
+The project-owned candidate now has host-specific startup, memory, typing, rendering, and 50 MiB measurements in `docs/EDITOR_PROTOTYPE.md`. Those offscreen results are not a low-end reference-device acceptance test. QScintilla has not been built or timed, so the report's component comparison remains based on documented capabilities for that candidate. The performance targets in section 7.0 remain provisional.
 
 ## Candidates
 
@@ -76,6 +76,6 @@ Run both candidates with highlighting off and on. Record the exact 50 MB file ge
 
 ## Findings and decision record
 
-- **Measured comparison:** none. No Qt 6 or QScintilla development installation is present in the current environment, so a comparable build/run was unavailable.
-- **Documented capability comparison:** Scintilla supplies multiple-selection, lexer/container styling, style customization, and large-document options; Qt `QPlainTextEdit` is optimized for plain text but Qt warns about very large document responsiveness/memory. These facts identify candidate strengths and risks, not measured Note behavior.
-- **Recommendation:** prefer a project-owned viewport renderer for architectural fit and long-term control, but gate its implementation on a small same-device prototype. If that prototype cannot meet the provisional input/scroll budget or consumes too much engineering time, revisit QScintilla with the architectural and license conditions above. Do not claim the 50 MB or 16 ms targets are met yet.
+- **Measured comparison:** the project-owned implementation and buffer candidates are measured in `docs/EDITOR_PROTOTYPE.md`; QScintilla remains unmeasured. Project-owned measurements establish feasibility on the current Windows/offscreen host, not superiority on the low-end reference device.
+- **Documented capability comparison:** Scintilla supplies multiple-selection, lexer/container styling, style customization, and large-document options; Qt `QPlainTextEdit` is optimized for plain text but Qt warns about very large document responsiveness/memory. These identify component strengths and risks; they are not benchmarks.
+- **Recommendation:** proceed with the project-owned viewport architecture and provisional piece-table storage model, using an indexed balanced piece/line structure in production. Keep low-end performance and cross-platform validation as completion gates. Revisit QScintilla only if those gates fail and the licensing/architecture conditions above are resolved.

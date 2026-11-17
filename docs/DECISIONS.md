@@ -4,11 +4,11 @@ The specification identifies ten decisions as open. Current recommendation and r
 
 | Decision | Initial direction | Before final commitment |
 |---|---|---|
-| Programming language | C++20 | Validate on supported compilers/platforms and measure the app baseline. |
-| GUI framework | Qt 6 Widgets | Confirm licensing/distribution needs and startup/idle-memory budget on reference hardware. |
-| Text editing | Undecided: custom viewport editor vs Scintilla-based component | Prototype representative typing, selection, multi-cursor, large-file and theme behavior; check ownership/boundaries. |
-| Text rendering | Qt text/font primitives and viewport-only drawing are the custom-path candidate | Compare against editor component and verify sub-16 ms provisional update target. |
-| Text buffer | Undecided | Measure a piece table and/or rope against expected editing, retrieval, undo, multi-cursor and large-file workloads before selecting. Avoid duplicating the full document. |
+| Programming language | C++20 (selected for the foundation) | Windows build validated; Linux/macOS compiler and packaging validation remain. |
+| GUI framework | Qt 6 Widgets (selected for the foundation) | Qt 6.9.1 shell/prototype builds on Windows. Cross-platform deployment and reference-device performance remain. |
+| Text editing | Project-owned Editor Engine and viewport renderer (recommended) | Isolated prototype passes basic interaction checks. Production behavior and low-end performance remain unvalidated; QScintilla was not benchmarked. |
+| Text rendering | Custom viewport widget backed by Qt text/drawing primitives | Plain text, selection, caret and scrolling prototype validated offscreen. Wrapping, syntax spans, and real-display timing remain. |
+| Text buffer | Piece-table model selected provisionally; prototype uses a flat descriptor vector | Gap vs piece results are in `docs/EDITOR_PROTOTYPE.md`. Production should use an indexed balanced piece sequence; validate fragmentation and index costs on reference hardware. |
 | Syntax highlighting | Data-defined language rules with incremental line-based processing is the product constraint | Select or implement a tokenizer only after checking language coverage, worst-case behavior, and data-driven extensions. Do not adopt an analysis/LSP stack. |
 | Configuration format | Undecided | Choose a small, validated format suitable for app-owned settings; no requirement for human-editable files. |
 | Theme format | Data-only format, distinct from settings; exact encoding undecided | Choose stable versioning and safe defaults for missing/invalid values. |
@@ -17,4 +17,4 @@ The specification identifies ten decisions as open. Current recommendation and r
 
 ## Benchmark gate
 
-Before committing to the long-term editor component or claiming the budget, name the low-end reference device and record cold start, idle memory, keystroke-to-screen latency, viewport scrolling/rendering, and progressive opening of a 50 MB file. Compare serious editor candidates with the same small workload. Section 7.0 targets remain provisional until the project owner confirms them.
+The editor architecture prototype is complete on this Windows host; see `docs/EDITOR_PROTOTYPE.md` for the actual setup, tests, and measurements. Before claiming the performance budget, name the low-end reference device and record true cold start, idle memory, keystroke-to-screen latency, real-display scrolling/rendering, and progressive opening of a 50 MiB file. Validate Linux/macOS builds and confirm the balanced piece/line index under fragmentation. Section 7.0 targets remain provisional until the project owner confirms them.

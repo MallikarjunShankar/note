@@ -12,18 +12,21 @@ Note prioritises low startup time, low idle memory and responsive editing over c
 | Rust + egui/wgpu or another Rust GUI | Strong memory safety and lean native binaries; Rust is suitable for an incremental buffer and renderer. | GUI ecosystem/platform polish and native dialogs/accessibility require validation; a custom editor and cross-platform integration still need significant work. GPU rendering can add complexity and power/memory cost without being necessary for a text editor. |
 | C++ + Scintilla-based editor component | Mature, responsive code-editing component with substantial editing and lexer capability; can shorten time to a usable editor. | Couples editor behavior/rendering to a third-party component and its API. Must verify that theme control, data-driven language definitions, line-based incremental highlighting, architecture boundaries, and packaging fit the specification. |
 
-## Recommendation
+## Recommendation and prototype result
 
 Use **C++20 + Qt 6 Widgets + CMake** for the application foundation. Build a native desktop application without a web runtime. Keep Qt-dependent windowing and drawing in the UI layer; keep document, language, and editor policies behind project-owned interfaces. Avoid a Qt Quick/QML or GPU requirement for the initial path.
 
-For the editor implementation, run a short, disposable comparison of **Qt's text primitives with a project-owned viewport renderer** versus **a Scintilla-based component** before committing to the long-term editor architecture. The custom path gives stronger architectural control and predictable data-driven highlighting, but requires more editor engineering. Scintilla may reach usability sooner and perform well, but could constrain ownership and renderer boundaries. Benchmark startup, idle memory, typing latency, viewport rendering, and a 50 MB file on the eventual reference device. The choice is not yet final.
+The isolated project-owned prototype in `docs/EDITOR_PROTOTYPE.md` now builds with Qt 6.9.1 and demonstrates a custom-painted viewport, basic editing, caret movement, selection, scrolling, and progressive 50 MiB loading on the current Windows host. A gap buffer and flat piece table were benchmarked under the same buffer workloads. The piece-table model performed substantially better for persistent random edits, while the gap buffer retained an advantage for local repeated edits.
 
-This is a recommendation, not evidence that the provisional performance budget has been met. Qt's added footprint is a real cost; the early baseline must confirm whether it is acceptable. If not, revisit the GUI candidate before building dependent systems.
+The recommended V1 direction is a project-owned Editor Engine and viewport renderer over a piece-table storage model, using a balanced piece index and indexed line metadata rather than the prototype's flat piece vector and line-start vector. This retains the specified state ownership and framework-agnostic Drawing Surface boundary. Qt 6 is now build-verified on this Windows environment.
+
+The recommendation is technically informed but still provisional: measurements used the Qt offscreen plugin on a host whose CPU model and physical RAM were unavailable. They do not establish the provisional low-end performance budget, real-display frame pacing, or Linux/macOS compatibility. Confirm the indexed piece structure and budget on the named reference device before declaring the architecture complete.
 
 ## Initial structure
 
 - `src/main.cpp`: minimal Qt application shell only.
 - `CMakeLists.txt`: C++20 executable and Qt Widgets dependency.
-- `docs/`: decisions, boundaries, and implementation sequence.
+- `benchmarks/editor_prototype/`: isolated editor and buffer experiments, not production code.
+- `docs/`: decisions, measurements, boundaries, and implementation sequence.
 
 Add directories only when the first real component in that system is implemented. This follows the specification's warning against empty scaffolding.

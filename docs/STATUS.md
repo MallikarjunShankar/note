@@ -6,9 +6,10 @@ This is the current status ledger for Note. “Complete” means implemented and
 
 | Area | Status | Evidence / remaining work |
 |---|---|---|
-| Repository and build configuration | **Partial** | CMake project and C++20 Qt Widgets target exist. Git baseline is being established. Build has not been verified because Qt 6 is not installed in the current environment. |
+| Repository and build configuration | **Partial** | Git baseline is established. CMake/C++20/Qt 6.9.1 production shell builds on the current Windows host; Linux/macOS deployment and V1 release packaging remain. |
 | Application shell | **Partial** | Minimal QApplication/QMainWindow shell exists. Lifecycle, application state, configuration loading, settings/theme managers, command registry, and usable editor window remain. |
-| Technology evaluation | **Partial** | Comparative review is recorded in `docs/EDITOR_EVALUATION.md`. Runtime prototypes and measurements remain outstanding; editor implementation and buffer are undecided. |
+| Technology evaluation | **Partial** | Isolated project-owned widget and gap/piece buffer benchmarks are recorded in `docs/EDITOR_PROTOTYPE.md`. QScintilla was not measured; the low-end reference device and cross-platform validation remain outstanding. |
+| Editor architecture decision | **Partial** | Project-owned viewport renderer and piece-table storage model are provisionally selected from the prototype. Production indexed piece/line structures and reference-device performance are not yet validated. |
 | V1 release readiness | **Not started** | No agreed editor features, file handling, recovery, platform validation, performance verification, or release packaging are complete. |
 
 ## System status
@@ -16,8 +17,8 @@ This is the current status ledger for Note. “Complete” means implemented and
 | System | Status | Remaining work |
 |---|---|---|
 | 01 Application Core | **Partial** | Only minimal process/window startup exists; lifecycle, state, bootstrap configuration, and resource handling remain. |
-| 02 User Interface | **Partial** | Only a blank main window exists; specified menus, tabs, editor view, status bar, settings UI, context menus, and drawing surface remain. |
-| 03 Editor Engine | **Not started** | Buffer, cursor/selection ownership, editing, undo/redo, renderer, indentation, pairing, and multi-cursor behavior remain. |
+| 02 User Interface | **Partial** | Production still has only a blank main window. The isolated prototype demonstrates a custom-painted viewport; specified menus, tabs, status bar, settings UI, context menus, production drawing surface, and integration remain. |
+| 03 Editor Engine | **Partial** | Isolated gap-buffer/piece-table and viewport prototype exists under `benchmarks/editor_prototype/`; it is not production code. Production buffer, cursor/selection ownership, undo/redo, renderer interfaces, indentation, pairing, multi-cursor, syntax, and reference-device validation remain. |
 | 04 Document Management | **Not started** | Document/tab models, file service, atomic persistence, encoding/line endings, external modification handling, and drag/drop remain. |
 | 05 Language System | **Not started** | Registry, data-driven detection/definitions, incremental highlighting, and cache remain. |
 | 06 Customisation | **Not started** | Settings, themes, typography/layout preferences, persistence, theme editor, and keybindings remain. |

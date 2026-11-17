@@ -47,6 +47,6 @@
 
 ## Current foundation
 
-- C++20, Qt 6 Widgets, and CMake are the recommended foundation; this remains subject to the editor comparison and performance measurements documented in `docs/ARCHITECTURE.md` and `docs/EDITOR_EVALUATION.md`.
-- The current application is a bare window shell with no editor features. Its build has not been verified in the current environment because Qt 6 is unavailable.
+- C++20, Qt 6 Widgets, and CMake are the selected foundation for continued development. The project-owned editor with a piece-table model is the provisional recommendation, based on the isolated prototype and host measurements in `docs/EDITOR_PROTOTYPE.md`.
+- The production application remains a bare window shell with no editor features. Its build passes on the current Windows/Qt 6.9.1 environment. The separate prototype is not production functionality, and its offscreen measurements do not establish the provisional low-end budget or cross-platform readiness.
 - Consult `docs/STATUS.md` for the authoritative implementation status.

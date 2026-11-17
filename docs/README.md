@@ -4,13 +4,14 @@
 
 ## Current state
 
-The repository began with only the project specification. The foundation includes a CMake C++20/Qt 6 Widgets application shell, but it has no editor behavior and has not been built in the current environment because Qt 6 is unavailable.
+The repository began with only the project specification. The CMake C++20/Qt 6 Widgets shell now builds on the current Windows environment. An isolated editor architecture prototype and host-specific measurements are documented; neither the prototype nor its measurements count as production features or prove the provisional low-end budget.
 
 ## Documents
 
 - [Implementation status](STATUS.md)
 - [Architecture and stack evaluation](ARCHITECTURE.md)
 - [Editor implementation comparison](EDITOR_EVALUATION.md)
+- [Project-owned editor prototype and measurements](EDITOR_PROTOTYPE.md)
 - [System boundaries](SYSTEMS.md)
 - [Open technical decisions](DECISIONS.md)
 - [Development plan](DEVELOPMENT_PLAN.md)
