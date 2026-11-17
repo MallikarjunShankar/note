@@ -15,12 +15,14 @@
 #include <QMessageBox>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QProgressDialog>
 #include <QStatusBar>
 #include <QTabBar>
 #include <QVBoxLayout>
 #include <QWidget>
 
 #include <cstdint>
+#include <algorithm>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -189,12 +191,51 @@ void MainWindow::refreshPresentation() {
 void MainWindow::openFile() {
     const auto selected = QFileDialog::getOpenFileName(this, tr("Open File"), {}, tr("All Files (*)"));
     if (selected.isEmpty()) return;
-    const auto result = workflow_.open(toPath(selected));
-    if (result.status == application::OperationStatus::failed) {
-        showError(tr("Could not open the file: %1").arg(fromUtf8(result.error)));
-        return;
-    }
-    if (result) refresh();
+    openPath(toPath(selected));
+}
+
+void MainWindow::openPath(const std::filesystem::path& path) {
+    const auto request = workflow_.openAsync(path,
+        [this](auto id, documents::OpenProgress update) {
+            const auto it = openProgress_.find(id);
+            if (it == openProgress_.end() || !it->second) return;
+            auto* dialog = it->second;
+            if (update.buildingIndex) {
+                dialog->setLabelText(tr("Building document index…"));
+                dialog->setRange(0, 0);
+                return;
+            }
+            dialog->setLabelText(tr("Opening file… %1 of %2 MB")
+                .arg(static_cast<qulonglong>(update.bytesRead / (1024 * 1024)))
+                .arg(static_cast<qulonglong>(update.totalBytes / (1024 * 1024))));
+            if (update.totalBytes > 0) {
+                dialog->setRange(0, 1000);
+                dialog->setValue(static_cast<int>(std::min<std::uintmax_t>(1000, update.bytesRead * 1000 / update.totalBytes)));
+            } else dialog->setRange(0, 0);
+        },
+        [this](auto id, application::WorkflowResult result) {
+            if (const auto it = openProgress_.find(id); it != openProgress_.end()) {
+                if (it->second) it->second->deleteLater();
+                openProgress_.erase(it);
+            }
+            if (result.status == application::OperationStatus::failed)
+                showError(tr("Could not open the file: %1").arg(fromUtf8(result.error)));
+            if (result) refresh();
+        });
+    if (!request || openProgress_.contains(request)) return;
+    auto* dialog = new QProgressDialog(tr("Opening file…"), tr("Cancel"), 0, 1000, this);
+    dialog->setObjectName(QStringLiteral("openProgressDialog"));
+    dialog->setWindowTitle(tr("Opening File"));
+    dialog->setWindowModality(Qt::NonModal);
+    dialog->setMinimumDuration(350);
+    dialog->setAutoClose(false);
+    dialog->setAutoReset(false);
+    connect(dialog, &QProgressDialog::canceled, this, [this, request, dialog] {
+        dialog->setLabelText(tr("Cancelling file open…"));
+        dialog->setCancelButton(nullptr);
+        workflow_.cancelOpen(request);
+    });
+    openProgress_.emplace(request, dialog);
 }
 
 void MainWindow::saveActive() {
@@ -324,6 +365,7 @@ void MainWindow::showError(const QString& message) {
 
 void MainWindow::closeEvent(QCloseEvent* event) {
     if (closingResolved_ || resolveAllDocumentsForWindowClose()) {
+        workflow_.shutdown();
         closingResolved_ = true;
         event->accept();
     } else {

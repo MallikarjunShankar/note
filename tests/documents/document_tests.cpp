@@ -285,12 +285,61 @@ void testDocumentsAndFiles() {
 
 }
 
+void testChunkedFileOpen() {
+    QTemporaryDir temporary;
+    require(temporary.isValid(), "temporary directory unavailable");
+    const auto path = std::filesystem::path(temporary.filePath(QStringLiteral("chunked.txt")).toStdWString());
+    writeBytes(path, QByteArray::fromHex("efbbbf610d0a62f09f98800d6364"));
+    note::documents::FileService service;
+    note::documents::OpenOptions options;
+    options.chunkBytes = 5;
+    std::size_t progressCount = 0;
+    options.progress = [&](note::documents::OpenProgress progress) {
+        if (!progress.buildingIndex) ++progressCount;
+    };
+    const auto opened = service.open(path, options);
+    require(opened && opened.buffer->text() == "a\nb\xf0\x9f\x98\x80\ncd",
+            "streaming decoder preserves split BOM, UTF-8 scalar, and CR/LF boundaries");
+    require(opened.buffer->lineEnding(0) == LineEnding::crlf &&
+            opened.buffer->lineEnding(1) == LineEnding::cr,
+            "streaming line ending normalization preserves original forms");
+    require(progressCount >= 2, "file loading reports incremental byte progress");
+
+    const auto utf16Path = std::filesystem::path(temporary.filePath(QStringLiteral("split16.txt")).toStdWString());
+    writeBytes(utf16Path, QByteArray::fromHex("fffe41000d000a003dd842de"));
+    note::documents::OpenOptions utf16Options;
+    utf16Options.chunkBytes = 1;
+    const auto utf16 = service.open(utf16Path, utf16Options);
+    const std::string expectedUtf16Text = std::string("A\n") + std::string("\xf0\x9f\x99\x82", 4);
+    require(utf16 && utf16.buffer->text() == expectedUtf16Text &&
+            utf16.buffer->lineEnding(0) == LineEnding::crlf,
+            "streaming UTF-16 decoder preserves split CRLF and surrogate boundaries");
+    const auto unmatchedSurrogate = std::filesystem::path(temporary.filePath(QStringLiteral("bad_surrogate.txt")).toStdWString());
+    writeBytes(unmatchedSurrogate, QByteArray::fromHex("fffe00d8"));
+    require(!service.open(unmatchedSurrogate, utf16Options), "unmatched UTF-16 surrogate must be rejected");
+
+    const auto malformedPath = std::filesystem::path(temporary.filePath(QStringLiteral("truncated.txt")).toStdWString());
+    writeBytes(malformedPath, QByteArray::fromHex("f09f"));
+    require(!service.open(malformedPath), "truncated UTF-8 must be rejected at final buffer validation");
+
+    const auto cancelPath = std::filesystem::path(temporary.filePath(QStringLiteral("cancel.txt")).toStdWString());
+    writeBytes(cancelPath, QByteArray(1024 * 1024, 'x'));
+    auto cancelled = std::make_shared<std::atomic_bool>(false);
+    options.cancelled = cancelled;
+    options.progress = [cancelled](note::documents::OpenProgress progress) {
+        if (progress.bytesRead >= 5) cancelled->store(true);
+    };
+    const auto stopped = service.open(cancelPath, options);
+    require(!stopped && stopped.error == "Opening was cancelled.", "streaming file read observes cancellation between chunks");
+}
+
 } // namespace
 
 int main() {
     try {
         testTextBuffer();
         testDocumentsAndFiles();
+        testChunkedFileOpen();
         std::cout << "All document foundation tests passed.\n";
         return 0;
     } catch (const std::exception& error) {

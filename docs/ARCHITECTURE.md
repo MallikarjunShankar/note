@@ -36,6 +36,6 @@ The recommendation is technically informed but still provisional: measurements u
 - `tests/documents/`: deterministic document subsystem tests.
 - `docs/`: decisions, measurements, boundaries, and implementation sequence.
 
-Phase 02 implementation details and measurements are in [`DATA_MODELS.md`](DATA_MODELS.md), [`INTERFACES.md`](INTERFACES.md), and [`PERFORMANCE.md`](PERFORMANCE.md). Basic document/tab UI integration is in place. File opening remains synchronous and currently occurs from the UI workflow; progressive/background loading, production editing, recovery, and cross-platform/reference-device validation remain outstanding.
+Phase 02 implementation details and measurements are in [`DATA_MODELS.md`](DATA_MODELS.md), [`INTERFACES.md`](INTERFACES.md), and [`PERFORMANCE.md`](PERFORMANCE.md). File reads and decoding now run as bounded background tasks. The worker keeps the incomplete buffer private and the workflow publishes a document and tab only after the complete file passes validation. The UI receives byte progress, supports cancellation, and shuts pending requests down without waiting on them. Production editing, recovery, external-change detection, reference-device and cross-platform validation remain outstanding.
 
 Add directories only when the first real component in that system is implemented. This follows the specification's warning against empty scaffolding.

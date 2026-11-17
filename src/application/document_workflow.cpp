@@ -1,7 +1,12 @@
 #include "application/document_workflow.hpp"
 
 #include <algorithm>
+#include <QMetaObject>
+#include <QPointer>
+#include <QThreadPool>
 #include <exception>
+#include <filesystem>
+#include <memory>
 #include <utility>
 
 namespace note::application {
@@ -14,7 +19,119 @@ WorkflowResult failed(std::string message,
 
 } // namespace
 
+DocumentWorkflow::~DocumentWorkflow() { shutdown(); }
+
+DocumentWorkflow::OpenRequestId DocumentWorkflow::openAsync(
+    const std::filesystem::path& path, OpenProgressCallback progress, OpenCompleteCallback complete) {
+    if (path.empty() || shuttingDown_) return 0;
+    std::error_code pathError;
+    auto key = std::filesystem::weakly_canonical(path, pathError);
+    if (pathError) {
+        pathError.clear();
+        key = std::filesystem::absolute(path, pathError);
+        if (pathError) key = path;
+    }
+    key = key.lexically_normal();
+    if (const auto it = pendingPaths_.find(key); it != pendingPaths_.end()) {
+        if (const auto pending = pendingOpens_.find(it->second); pending != pendingOpens_.end())
+            pending->second->observers.emplace_back(std::move(progress), std::move(complete));
+        return it->second;
+    }
+    if (const auto existing = documents_.findByPath(path)) {
+        ++selectionEpoch_;
+        (void)documents_.setActiveDocument(*existing);
+        const auto id = nextOpenRequestId_++;
+        if (complete) QMetaObject::invokeMethod(this, [this, id, existing, complete = std::move(complete)]() mutable {
+            if (!shuttingDown_) complete(id, {OperationStatus::alreadyOpen, existing, {}});
+        }, Qt::QueuedConnection);
+        return id;
+    }
+
+    const auto epochAtStart = ++selectionEpoch_;
+    const auto requestId = nextOpenRequestId_++;
+    auto pending = std::make_shared<PendingOpen>();
+    pending->cancelled = std::make_shared<std::atomic_bool>(false);
+    pending->observers.emplace_back(std::move(progress), std::move(complete));
+    pendingOpens_.emplace(requestId, pending);
+    pendingPaths_.emplace(key, requestId);
+    QPointer<DocumentWorkflow> guard(this);
+    const auto pool = [] {
+        static auto* instance = [] { auto* value = new QThreadPool; value->setMaxThreadCount(2); return value; }();
+        return instance;
+    }();
+    pool->start([guard, path, key, requestId, epochAtStart, pending]() mutable {
+        documents::OpenOptions options;
+        options.cancelled = pending->cancelled;
+        options.progress = [guard, requestId, pending](documents::OpenProgress update) {
+            if (!guard) return;
+            QMetaObject::invokeMethod(guard, [guard, requestId, pending, update] {
+                if (!guard || guard->shuttingDown_) return;
+                const auto observers = pending->observers;
+                for (const auto& observer : observers)
+                    if (observer.first) observer.first(requestId, update);
+            }, Qt::QueuedConnection);
+        };
+        auto opened = std::make_shared<documents::OpenFileResult>();
+        if (!pending->cancelled->load()) {
+            try { *opened = documents::FileService{}.open(path, options); }
+            catch (const std::exception& error) { opened->error = error.what(); }
+            catch (...) { opened->error = "An unexpected error occurred while opening the file."; }
+        }
+        if (!guard) return;
+        QMetaObject::invokeMethod(guard, [guard, requestId, path, key, epochAtStart, pending, opened]() mutable {
+            if (!guard) return;
+            guard->pendingOpens_.erase(requestId);
+            guard->pendingPaths_.erase(key);
+            if (guard->shuttingDown_) return;
+            WorkflowResult result;
+            if (pending->cancelled->load() || opened->error == "Opening was cancelled.") {
+                result = {OperationStatus::cancelled, std::nullopt, {}};
+            } else if (!*opened) {
+                result = failed(std::move(opened->error));
+            } else {
+                try {
+                    if (const auto existing = guard->documents_.findByPath(path)) {
+                        if (guard->selectionEpoch_ == epochAtStart)
+                            (void)guard->documents_.setActiveDocument(*existing);
+                        result = {OperationStatus::alreadyOpen, existing, {}};
+                    } else {
+                        const auto previouslyActive = guard->documents_.activeDocument();
+                        auto& document = guard->documents_.registerOpened(std::move(opened->buffer), std::move(opened->metadata));
+                        try { guard->tabs_.add(document.id()); }
+                        catch (...) {
+                            (void)guard->documents_.close(document.id(), true);
+                            if (previouslyActive) (void)guard->documents_.setActiveDocument(*previouslyActive);
+                            throw;
+                        }
+                        if (guard->selectionEpoch_ != epochAtStart && previouslyActive)
+                            (void)guard->documents_.setActiveDocument(*previouslyActive);
+                        result = {OperationStatus::success, document.id(), {}};
+                    }
+                } catch (const std::exception& error) { result = failed(error.what()); }
+            }
+            for (auto& observer : pending->observers)
+                if (observer.second) observer.second(requestId, result);
+            pending->observers.clear();
+        }, Qt::QueuedConnection);
+    });
+    return requestId;
+}
+
+void DocumentWorkflow::cancelOpen(OpenRequestId id) noexcept {
+    const auto it = pendingOpens_.find(id);
+    if (it != pendingOpens_.end()) it->second->cancelled->store(true);
+}
+
+void DocumentWorkflow::shutdown() noexcept {
+    if (shuttingDown_) return;
+    shuttingDown_ = true;
+    for (auto& [id, request] : pendingOpens_) { (void)id; request->cancelled->store(true); }
+    pendingOpens_.clear();
+    pendingPaths_.clear();
+}
+
 documents::Document& DocumentWorkflow::createNew() {
+    ++selectionEpoch_;
     const auto previousActive = documents_.activeDocument();
     auto& document = documents_.createNew();
     try {
@@ -30,10 +147,12 @@ documents::Document& DocumentWorkflow::createNew() {
 WorkflowResult DocumentWorkflow::open(const std::filesystem::path& path) {
     if (path.empty()) return {OperationStatus::cancelled, std::nullopt, {}};
     if (const auto existing = documents_.findByPath(path)) {
+        ++selectionEpoch_;
         (void)documents_.setActiveDocument(*existing);
         return {OperationStatus::alreadyOpen, existing, {}};
     }
 
+    ++selectionEpoch_;
     const auto previousActive = documents_.activeDocument();
     auto opened = files_.open(path);
     if (!opened) return failed(std::move(opened.error));
@@ -57,6 +176,7 @@ WorkflowResult DocumentWorkflow::activate(documents::DocumentId id) noexcept {
     if (!tabs_.contains(id) || !documents_.setActiveDocument(id)) {
         return {OperationStatus::notFound, id, {}};
     }
+    ++selectionEpoch_;
     return {OperationStatus::success, id, {}};
 }
 
@@ -112,6 +232,7 @@ WorkflowResult DocumentWorkflow::close(documents::DocumentId id, CloseChoice cho
         const auto next = tabs_.at(nextIndex);
         if (next) (void)documents_.setActiveDocument(*next);
     }
+    if (wasActive) ++selectionEpoch_;
     return {OperationStatus::success, id, {}};
 }
 

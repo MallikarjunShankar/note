@@ -4,7 +4,7 @@
 
 ## Current state
 
-The CMake C++20/Qt 6 Widgets application now provides basic document and tab lifecycle workflows over the production document foundation. It remains partial: the central view is a bounded, read-only preview, opening is synchronous, and progressive opening plus cross-platform/reference-device validation remain outstanding. The isolated editor prototype and all current performance numbers remain research evidence, not production guarantees or proof of the low-end budget.
+The CMake C++20/Qt 6 Widgets application now provides basic document and tab lifecycle workflows over the production document foundation, including chunked asynchronous file opening with progress and cancellation. It remains partial: the central view is a bounded, read-only preview, and external-change handling, recovery, cross-platform/reference-device validation remain outstanding. Current performance numbers are host-specific evidence, not production guarantees or proof of the low-end budget.
 
 ## Documents
 

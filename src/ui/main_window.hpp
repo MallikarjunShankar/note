@@ -3,11 +3,13 @@
 #include "application/document_workflow.hpp"
 
 #include <QMainWindow>
+#include <map>
 
 class QCloseEvent;
 class QAction;
 class QTabBar;
 class QLabel;
+class QProgressDialog;
 
 namespace note::ui {
 
@@ -20,6 +22,7 @@ public:
     // Called by model-changing workflows and, once editing is integrated, by
     // the Editor View after a committed edit.
     void refreshFromModel();
+    void openPath(const std::filesystem::path& path);
 
 protected:
     void closeEvent(QCloseEvent* event) override;
@@ -46,6 +49,7 @@ private:
     QAction* saveAsAction_{};
     QAction* closeAction_{};
     bool closingResolved_{};
+    std::map<application::DocumentWorkflow::OpenRequestId, QProgressDialog*> openProgress_;
 };
 
 } // namespace note::ui

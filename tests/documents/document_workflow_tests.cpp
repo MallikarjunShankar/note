@@ -1,7 +1,10 @@
 #include "application/document_workflow.hpp"
 
 #include <QFile>
+#include <QCoreApplication>
+#include <QEventLoop>
 #include <QTemporaryDir>
+#include <QTimer>
 
 #include <filesystem>
 #include <iostream>
@@ -188,13 +191,74 @@ void testSaveFailureOnCloseAndUntitledSave() {
             "discard after save failure safely closes modified document");
 }
 
+void testAsynchronousProgressiveOpen() {
+    using namespace note::application;
+    QTemporaryDir temporary;
+    require(temporary.isValid(), "temporary directory unavailable");
+    const auto path = pathFromQString(temporary.filePath(QStringLiteral("large.txt")));
+    writeFile(path, QByteArray(8 * 1024 * 1024, 'x'));
+    DocumentWorkflow workflow;
+    bool completed = false;
+    bool duplicateCompleted = false;
+    WorkflowResult result;
+    std::size_t progressEvents = 0;
+    QEventLoop loop;
+    const auto request = workflow.openAsync(path,
+        [&](auto, note::documents::OpenProgress update) { if (!update.buildingIndex) ++progressEvents; },
+        [&](auto, WorkflowResult value) { completed = true; result = std::move(value); loop.quit(); });
+    require(request != 0 && workflow.documentCount() == 0 && workflow.tabs().size() == 0,
+            "pending open is not published as a document or tab");
+    const auto duplicate = workflow.openAsync(path, {},
+        [&](auto, WorkflowResult value) { duplicateCompleted = value.status == OperationStatus::success; });
+    require(duplicate == request, "duplicate pending open shares the existing request");
+    bool timedOut = false;
+    QTimer timeout;
+    timeout.setSingleShot(true);
+    QObject::connect(&timeout, &QTimer::timeout, &loop, [&] { timedOut = true; loop.quit(); });
+    timeout.start(15000);
+    while (!completed && !timedOut) loop.exec();
+    require(!timedOut, "background open completes before test timeout");
+    require(result.status == OperationStatus::success && result.documentId &&
+            workflow.documentCount() == 1 && workflow.tabs().size() == 1,
+            "completed background open is published atomically");
+    require(duplicateCompleted, "duplicate pending caller receives the shared completion");
+    require(progressEvents > 0, "asynchronous opening reports reading progress");
+
+    const auto cancelPath = pathFromQString(temporary.filePath(QStringLiteral("cancel.txt")));
+    writeFile(cancelPath, QByteArray(8 * 1024 * 1024, 'y'));
+    completed = false;
+    const auto cancelRequest = workflow.openAsync(cancelPath, {},
+        [&](auto, WorkflowResult value) { completed = true; result = std::move(value); loop.quit(); });
+    workflow.cancelOpen(cancelRequest);
+    timedOut = false;
+    timeout.start(15000);
+    while (!completed && !timedOut) loop.exec();
+    require(!timedOut, "cancelled background open completes before test timeout");
+    require(result.status == OperationStatus::cancelled && workflow.documentCount() == 1 &&
+            workflow.tabs().size() == 1,
+            "cancelled background open leaves no partial document or tab");
+    const auto shutdownPath = pathFromQString(temporary.filePath(QStringLiteral("shutdown.txt")));
+    writeFile(shutdownPath, QByteArray(8 * 1024 * 1024, 'z'));
+    bool callbackAfterShutdown = false;
+    (void)workflow.openAsync(shutdownPath, {},
+        [&](auto, WorkflowResult) { callbackAfterShutdown = true; });
+    workflow.shutdown();
+    QEventLoop shutdownLoop;
+    QTimer::singleShot(100, &shutdownLoop, &QEventLoop::quit);
+    shutdownLoop.exec();
+    require(!callbackAfterShutdown && workflow.documentCount() == 1 && workflow.tabs().size() == 1,
+            "shutdown cancels pending work and suppresses callbacks and partial publication");
+}
+
 } // namespace
 
-int main() {
+int main(int argc, char* argv[]) {
+    QCoreApplication app(argc, argv);
     try {
         testCreateOpenSwitchAndDuplicate();
         testSaveAsCollisionAndCloseChoices();
         testSaveFailureOnCloseAndUntitledSave();
+        testAsynchronousProgressiveOpen();
         std::cout << "All document workflow tests passed.\n";
         return 0;
     } catch (const std::exception& error) {

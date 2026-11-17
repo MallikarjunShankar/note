@@ -4,9 +4,13 @@
 #include <QAction>
 #include <QAbstractButton>
 #include <QApplication>
+#include <QFile>
 #include <QMetaObject>
 #include <QMessageBox>
 #include <QPlainTextEdit>
+#include <QProgressDialog>
+#include <QPushButton>
+#include <QTemporaryDir>
 #include <QTabBar>
 #include <QTimer>
 
@@ -78,6 +82,63 @@ int main(int argc, char* argv[]) {
         require(tabs->count() == 0 && workflow.documentCount() == 0 &&
                 !workflow.activeDocument() && !closeAction->isEnabled(),
                 "closing final tab leaves a valid empty workspace");
+
+        QTemporaryDir temporary;
+        require(temporary.isValid(), "temporary directory unavailable");
+        const auto largePath = temporary.filePath(QStringLiteral("cancel.txt"));
+        QFile largeFile(largePath);
+        require(largeFile.open(QIODevice::WriteOnly), "could not create cancellation fixture");
+        require(largeFile.write(QByteArray(8 * 1024 * 1024, 'x')) == 8 * 1024 * 1024,
+                "could not write cancellation fixture");
+        largeFile.close();
+        window.openPath(std::filesystem::path(largePath.toStdWString()));
+        auto* progress = window.findChild<QProgressDialog*>(QStringLiteral("openProgressDialog"));
+        require(progress && workflow.documentCount() == 0 && tabs->count() == 0,
+                "open progress appears without publishing a partial tab");
+        auto* cancelOpenButton = progress->findChild<QPushButton*>();
+        require(cancelOpenButton != nullptr, "progress dialog exposes its cancel button");
+        cancelOpenButton->click();
+        QEventLoop cancellationLoop;
+        QTimer cancellationPoll;
+        cancellationPoll.setInterval(10);
+        QObject::connect(&cancellationPoll, &QTimer::timeout, &cancellationLoop, [&] {
+            if (!window.findChild<QProgressDialog*>(QStringLiteral("openProgressDialog"))) cancellationLoop.quit();
+        });
+        QTimer cancellationTimeout;
+        cancellationTimeout.setSingleShot(true);
+        QObject::connect(&cancellationTimeout, &QTimer::timeout, &cancellationLoop, &QEventLoop::quit);
+        cancellationPoll.start();
+        cancellationTimeout.start(5000);
+        cancellationLoop.exec();
+        cancellationPoll.stop();
+        require(!window.findChild<QProgressDialog*>(QStringLiteral("openProgressDialog")) &&
+                workflow.documentCount() == 0 && tabs->count() == 0,
+                "cancel action closes progress without publishing a document or tab");
+
+        const auto smallPath = temporary.filePath(QStringLiteral("success.txt"));
+        QFile smallFile(smallPath);
+        require(smallFile.open(QIODevice::WriteOnly) && smallFile.write("ready") == 5,
+                "could not create successful-open fixture");
+        smallFile.close();
+        window.openPath(std::filesystem::path(smallPath.toStdWString()));
+        QEventLoop openLoop;
+        QTimer openPoll;
+        openPoll.setInterval(10);
+        QObject::connect(&openPoll, &QTimer::timeout, &openLoop, [&] {
+            if (workflow.documentCount() == 1) openLoop.quit();
+        });
+        QTimer openTimeout;
+        openTimeout.setSingleShot(true);
+        QObject::connect(&openTimeout, &QTimer::timeout, &openLoop, &QEventLoop::quit);
+        openPoll.start();
+        openTimeout.start(5000);
+        openLoop.exec();
+        openPoll.stop();
+        require(workflow.documentCount() == 1 && tabs->count() == 1 &&
+                workflow.activeDocument()->buffer().text() == "ready",
+                "successful async open publishes one complete document and tab");
+        closeAction->trigger();
+        require(workflow.documentCount() == 0, "opened test document closes cleanly");
 
         newAction->trigger();
         workflow.activeDocument()->buffer().insert(0, "unsaved window document");

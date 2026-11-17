@@ -31,97 +31,6 @@ std::string utf8(const QString& value) {
     return {bytes.constData(), static_cast<std::size_t>(bytes.size())};
 }
 
-struct DecodedFile {
-    QString text;
-    FileEncoding encoding{FileEncoding::utf8};
-};
-
-bool decodeFile(const QByteArray& bytes, DecodedFile& decoded, std::string& error) {
-    qsizetype offset = 0;
-    QStringDecoder::Encoding encoding = QStringDecoder::Utf8;
-    if (bytes.startsWith(QByteArray::fromHex("fffe0000")) ||
-        bytes.startsWith(QByteArray::fromHex("0000feff"))) {
-        error = "UTF-32 files are unsupported; convert the file to UTF-8 or UTF-16 first.";
-        return false;
-    }
-    if (bytes.startsWith(QByteArray::fromHex("efbbbf"))) {
-        decoded.encoding = FileEncoding::utf8Bom;
-        offset = 3;
-    } else if (bytes.startsWith(QByteArray::fromHex("fffe"))) {
-        decoded.encoding = FileEncoding::utf16LittleEndian;
-        encoding = QStringDecoder::Utf16LE;
-        offset = 2;
-    } else if (bytes.startsWith(QByteArray::fromHex("feff"))) {
-        decoded.encoding = FileEncoding::utf16BigEndian;
-        encoding = QStringDecoder::Utf16BE;
-        offset = 2;
-    } else {
-        decoded.encoding = FileEncoding::utf8;
-    }
-
-    if ((decoded.encoding == FileEncoding::utf16LittleEndian ||
-         decoded.encoding == FileEncoding::utf16BigEndian) && ((bytes.size() - offset) % 2) != 0) {
-        error = "The file contains malformed UTF-16 data (odd byte count).";
-        return false;
-    }
-
-    QStringDecoder decoder(encoding);
-    decoded.text = decoder(QByteArrayView(bytes.constData() + offset, bytes.size() - offset));
-    if (decoder.hasError()) {
-        error = decoded.encoding == FileEncoding::utf8
-            ? "The file is not valid UTF-8; legacy encodings are not guessed."
-            : "The file contains malformed UTF-16 data.";
-        return false;
-    }
-    if (decoded.encoding == FileEncoding::utf16LittleEndian || decoded.encoding == FileEncoding::utf16BigEndian) {
-        for (qsizetype i = 0; i < decoded.text.size(); ++i) {
-            const auto unit = decoded.text.at(i).unicode();
-            if (unit >= 0xd800 && unit <= 0xdbff) {
-                if (i + 1 >= decoded.text.size()) {
-                    error = "The file contains an unmatched UTF-16 high surrogate.";
-                    return false;
-                }
-                const auto next = decoded.text.at(i + 1).unicode();
-                if (next < 0xdc00 || next > 0xdfff) {
-                    error = "The file contains an unmatched UTF-16 high surrogate.";
-                    return false;
-                }
-                ++i;
-            } else if (unit >= 0xdc00 && unit <= 0xdfff) {
-                error = "The file contains an unmatched UTF-16 low surrogate.";
-                return false;
-            }
-        }
-    }
-    return true;
-}
-
-editor::TextSnapshot normalizeLineEndings(const QString& text) {
-    QString canonical;
-    canonical.reserve(text.size());
-    editor::TextSnapshot snapshot;
-    for (qsizetype i = 0; i < text.size(); ++i) {
-        const auto character = text.at(i);
-        if (character == QLatin1Char('\r')) {
-            if (i + 1 < text.size() && text.at(i + 1) == QLatin1Char('\n')) {
-                snapshot.lineEndings.push_back(editor::LineEnding::crlf);
-                ++i;
-            } else {
-                snapshot.lineEndings.push_back(editor::LineEnding::cr);
-            }
-            canonical.append(QLatin1Char('\n'));
-        } else if (character == QLatin1Char('\n')) {
-            snapshot.lineEndings.push_back(editor::LineEnding::lf);
-            canonical.append(QLatin1Char('\n'));
-        } else {
-            canonical.append(character);
-        }
-    }
-    const auto bytes = canonical.toUtf8();
-    snapshot.utf8.assign(bytes.constData(), static_cast<std::size_t>(bytes.size()));
-    return snapshot;
-}
-
 editor::LineEnding preferredEnding(const std::vector<editor::LineEnding>& endings) {
     std::array<std::size_t, 3> counts{};
     for (const auto ending : endings) ++counts[static_cast<std::size_t>(ending)];
@@ -275,23 +184,179 @@ FileOperationResult writeDocument(Document& document, const std::filesystem::pat
 } // namespace
 
 OpenFileResult FileService::open(const std::filesystem::path& path) const {
+    return open(path, OpenOptions{});
+}
+
+OpenFileResult FileService::open(const std::filesystem::path& path, const OpenOptions& options) const {
+    if (options.cancelled && options.cancelled->load()) return {nullptr, {}, "Opening was cancelled."};
     const auto qpath = toQString(path);
     QFile file(qpath);
     if (!file.open(QIODevice::ReadOnly)) return {nullptr, {}, utf8(file.errorString())};
-    const auto bytes = file.readAll();
+    const QFileInfo initialInfo(file);
+    const auto expectedSize = static_cast<std::uintmax_t>(std::max<qint64>(0, initialInfo.size()));
+    const auto initialModified = initialInfo.lastModified().toMSecsSinceEpoch();
+    const auto chunkSize = static_cast<qsizetype>(std::clamp<std::size_t>(options.chunkBytes, 1, 16 * 1024 * 1024));
+    QByteArray first = file.read(std::max<qsizetype>(chunkSize, 4));
     if (file.error() != QFileDevice::NoError) return {nullptr, {}, utf8(file.errorString())};
+    if (options.cancelled && options.cancelled->load()) return {nullptr, {}, "Opening was cancelled."};
 
-    DecodedFile decoded;
-    std::string error;
-    if (!decodeFile(bytes, decoded, error)) return {nullptr, {}, std::move(error)};
-    auto snapshot = normalizeLineEndings(decoded.text);
+    FileEncoding fileEncoding = FileEncoding::utf8;
+    QStringDecoder::Encoding encoding = QStringDecoder::Utf8;
+    qsizetype offset = 0;
+    const QByteArray utf32le = QByteArray::fromHex("fffe0000");
+    const QByteArray utf32be = QByteArray::fromHex("0000feff");
+    if (first.startsWith(utf32le) || first.startsWith(utf32be))
+        return {nullptr, {}, "UTF-32 files are unsupported; convert the file to UTF-8 or UTF-16 first."};
+    if (first.startsWith(QByteArray::fromHex("efbbbf"))) { fileEncoding = FileEncoding::utf8Bom; offset = 3; }
+    else if (first.startsWith(QByteArray::fromHex("fffe"))) { fileEncoding = FileEncoding::utf16LittleEndian; encoding = QStringDecoder::Utf16LE; offset = 2; }
+    else if (first.startsWith(QByteArray::fromHex("feff"))) { fileEncoding = FileEncoding::utf16BigEndian; encoding = QStringDecoder::Utf16BE; offset = 2; }
+
+    QStringDecoder decoder(encoding);
+    bool pendingHighSurrogate = false;
+    bool invalidUtf16 = false;
+    QChar pendingHighUnit;
+    int utf8Continuation = 0;
+    unsigned char utf8NextMin = 0x80;
+    unsigned char utf8NextMax = 0xbf;
+    bool invalidUtf8 = false;
+    auto validateUtf8 = [&](QByteArrayView bytes) {
+        if (fileEncoding != FileEncoding::utf8 && fileEncoding != FileEncoding::utf8Bom) return true;
+        for (const auto raw : bytes) {
+            const auto byte = static_cast<unsigned char>(raw);
+            if (utf8Continuation != 0) {
+                if (byte < utf8NextMin || byte > utf8NextMax) return false;
+                --utf8Continuation;
+                utf8NextMin = 0x80; utf8NextMax = 0xbf;
+            } else if (byte <= 0x7f) continue;
+            else if (byte >= 0xc2 && byte <= 0xdf) utf8Continuation = 1;
+            else if (byte == 0xe0) { utf8Continuation = 2; utf8NextMin = 0xa0; }
+            else if ((byte >= 0xe1 && byte <= 0xec) || (byte >= 0xee && byte <= 0xef)) utf8Continuation = 2;
+            else if (byte == 0xed) { utf8Continuation = 2; utf8NextMax = 0x9f; }
+            else if (byte == 0xf0) { utf8Continuation = 3; utf8NextMin = 0x90; }
+            else if (byte >= 0xf1 && byte <= 0xf3) utf8Continuation = 3;
+            else if (byte == 0xf4) { utf8Continuation = 3; utf8NextMax = 0x8f; }
+            else return false;
+        }
+        return true;
+    };
+    editor::TextSnapshot snapshot;
+    snapshot.utf8.reserve(static_cast<std::size_t>(expectedSize));
+    snapshot.lineEndings.reserve(static_cast<std::size_t>(expectedSize / 32));
+    bool pendingCr = false;
+    auto appendDecoded = [&](const QString& text) {
+        if (text.isEmpty()) return;
+        QString canonical;
+        canonical.reserve(text.size() + (pendingCr ? 1 : 0));
+        qsizetype i = 0;
+        if (pendingCr) {
+            if (!text.isEmpty() && text.front() == QLatin1Char('\n')) {
+                canonical.append(QLatin1Char('\n')); snapshot.lineEndings.push_back(editor::LineEnding::crlf); i = 1;
+            } else {
+                canonical.append(QLatin1Char('\n')); snapshot.lineEndings.push_back(editor::LineEnding::cr);
+            }
+            pendingCr = false;
+        }
+        for (; i < text.size(); ++i) {
+            const auto ch = text.at(i);
+            if (ch == QLatin1Char('\r')) {
+                if (i + 1 < text.size()) {
+                    if (text.at(i + 1) == QLatin1Char('\n')) { canonical.append(QLatin1Char('\n')); snapshot.lineEndings.push_back(editor::LineEnding::crlf); ++i; }
+                    else { canonical.append(QLatin1Char('\n')); snapshot.lineEndings.push_back(editor::LineEnding::cr); }
+                } else pendingCr = true;
+            } else if (ch == QLatin1Char('\n')) {
+                canonical.append(ch); snapshot.lineEndings.push_back(editor::LineEnding::lf);
+            } else canonical.append(ch);
+        }
+        const auto bytes = canonical.toUtf8();
+        snapshot.utf8.append(bytes.constData(), static_cast<std::size_t>(bytes.size()));
+    };
+    std::uintmax_t bytesRead = 0;
+    auto decodeChunk = [&](QByteArrayView bytes) -> bool {
+        if (!validateUtf8(bytes)) { invalidUtf8 = true; return false; }
+        const QString text = decoder(bytes);
+        if (decoder.hasError()) return false;
+        if (fileEncoding != FileEncoding::utf16LittleEndian && fileEncoding != FileEncoding::utf16BigEndian) {
+            appendDecoded(text);
+            return true;
+        }
+        QString ready;
+        qsizetype start = 0;
+        if (pendingHighSurrogate) {
+            if (text.isEmpty()) return true;
+            const auto first = text.front().unicode();
+            if (first < 0xdc00 || first > 0xdfff) { invalidUtf16 = true; return false; }
+            ready.append(pendingHighUnit);
+            ready.append(text.front());
+            start = 1;
+            pendingHighSurrogate = false;
+        }
+        auto end = text.size();
+        if (end > start && text.at(end - 1).unicode() >= 0xd800 && text.at(end - 1).unicode() <= 0xdbff) {
+            pendingHighUnit = text.at(end - 1);
+            pendingHighSurrogate = true;
+            --end;
+        }
+        for (auto i = start; i < end; ++i) {
+            const auto unit = text.at(i).unicode();
+            if (unit >= 0xd800 && unit <= 0xdbff) {
+                if (i + 1 >= end) { invalidUtf16 = true; return false; }
+                const auto next = text.at(i + 1).unicode();
+                if (next < 0xdc00 || next > 0xdfff) { invalidUtf16 = true; return false; }
+                ready.append(text.at(i));
+                ready.append(text.at(++i));
+            } else if (unit >= 0xdc00 && unit <= 0xdfff) { invalidUtf16 = true; return false; }
+            else ready.append(text.at(i));
+        }
+        appendDecoded(ready);
+        return true;
+    };
+    if (!decodeChunk(QByteArrayView(first.constData() + offset, first.size() - offset))) {
+        const bool utf16 = fileEncoding == FileEncoding::utf16LittleEndian || fileEncoding == FileEncoding::utf16BigEndian;
+        return {nullptr, {}, utf16 ? "The file contains malformed UTF-16 data." : "The file is not valid UTF-8; legacy encodings are not guessed."};
+    }
+    bytesRead = static_cast<std::uintmax_t>(first.size());
+    if (options.progress) options.progress({bytesRead, expectedSize, false});
+    while (!file.atEnd()) {
+        if (options.cancelled && options.cancelled->load()) return {nullptr, {}, "Opening was cancelled."};
+        const auto bytes = file.read(chunkSize);
+        if (bytes.isEmpty() && file.error() != QFileDevice::NoError) return {nullptr, {}, utf8(file.errorString())};
+        if (bytes.isEmpty()) break;
+        if (!decodeChunk(QByteArrayView(bytes.constData(), bytes.size()))) {
+            const bool utf16 = fileEncoding == FileEncoding::utf16LittleEndian || fileEncoding == FileEncoding::utf16BigEndian;
+            return {nullptr, {}, utf16 ? "The file contains malformed UTF-16 data." : "The file is not valid UTF-8; legacy encodings are not guessed."};
+        }
+        bytesRead += static_cast<std::uintmax_t>(bytes.size());
+        if (options.progress) options.progress({bytesRead, expectedSize, false});
+    }
+    if (file.error() != QFileDevice::NoError) return {nullptr, {}, utf8(file.errorString())};
+    if (invalidUtf8 || invalidUtf16 || pendingHighSurrogate ||
+        ((fileEncoding == FileEncoding::utf8 || fileEncoding == FileEncoding::utf8Bom) && utf8Continuation != 0) ||
+        decoder.hasError() || ((fileEncoding == FileEncoding::utf16LittleEndian ||
+         fileEncoding == FileEncoding::utf16BigEndian) && ((bytesRead - static_cast<std::uintmax_t>(offset)) % 2) != 0)) {
+        const bool utf16 = fileEncoding == FileEncoding::utf16LittleEndian || fileEncoding == FileEncoding::utf16BigEndian;
+        return {nullptr, {}, utf16 ? "The file contains malformed UTF-16 data." : "The file is not valid UTF-8; legacy encodings are not guessed."};
+    }
+    if (pendingCr) { snapshot.utf8.push_back('\n'); snapshot.lineEndings.push_back(editor::LineEnding::cr); }
+    if (options.cancelled && options.cancelled->load()) return {nullptr, {}, "Opening was cancelled."};
+    const QFileInfo finalInfo(qpath);
+    if (!finalInfo.exists() || static_cast<std::uintmax_t>(std::max<qint64>(0, finalInfo.size())) != expectedSize ||
+        finalInfo.lastModified().toMSecsSinceEpoch() != initialModified)
+        return {nullptr, {}, "The file changed while it was being opened. Please try again."};
+    if (options.progress) options.progress({bytesRead, expectedSize, true});
     DocumentMetadata metadata;
     metadata.path = path;
-    metadata.encoding = decoded.encoding;
+    metadata.encoding = fileEncoding;
     metadata.preferredLineEnding = preferredEnding(snapshot.lineEndings);
     metadata.mixedLineEndings = mixedEndings(snapshot.lineEndings);
-    metadata.file = fileMetadata(QFileInfo(qpath));
-    auto buffer = std::make_unique<editor::TextBuffer>(std::move(snapshot));
+    metadata.file = fileMetadata(finalInfo);
+    std::unique_ptr<editor::TextBuffer> buffer;
+    try { buffer = std::make_unique<editor::TextBuffer>(std::move(snapshot)); }
+    catch (const std::exception&) {
+        return {nullptr, {}, fileEncoding == FileEncoding::utf8 || fileEncoding == FileEncoding::utf8Bom
+            ? "The file is not valid UTF-8; legacy encodings are not guessed."
+            : "The file contains malformed UTF-16 data."};
+    }
+    if (options.cancelled && options.cancelled->load()) return {nullptr, {}, "Opening was cancelled."};
     return {std::move(buffer), std::move(metadata), {}};
 }
 

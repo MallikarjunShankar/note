@@ -76,7 +76,24 @@ Keep the procedure, fixture generator, seeds, build configuration, and instrumen
 
 [`EDITOR_PROTOTYPE.md`](EDITOR_PROTOTYPE.md) records actual isolated prototype measurements: 50 MiB progressive line indexing median 193 ms, process launch to first-content log median 176.6 ms over 10 runs (a launch proxy, not cold start to a typeable window), synthetic 50 MiB key-to-paint median-run median 2.89 ms, offscreen scroll/paint timings, and small-file idle memory of 24.6 MiB working set / 38.7 MiB private bytes. These are prototype results on the described host and offscreen plugin. They do not establish production performance, true input-to-photon or real-display scrolling, the minimum hardware target, or Linux/macOS compatibility. The 50 MiB document memory was not represented by the small-file idle-memory sample.
 
-Physical low-end hardware, true cold startup, real-display frame pacing, editor-UI responsiveness during opening, multi-tab stress, long-line thresholds, and cross-platform release builds remain outstanding. Production buffer and File Service components have been exercised at 1/10/50/100 MiB below; those runs do not provide progressive-open evidence. The current Open action calls the synchronous File Service from the UI workflow, so opening large files can block the window; moving file opening off the UI thread is explicitly deferred to the next milestone.
+Physical low-end hardware, true cold startup, real-display frame pacing, multi-tab stress, long-line thresholds, and cross-platform release builds remain outstanding. A production background-open path and a 50 MiB event-loop responsiveness proxy are now measured below. The benchmark does not measure a visible GUI's input-to-photon response, process RSS, or minimum hardware behavior.
+
+## Asynchronous progressive file opening
+
+`benchmarks/asynchronous_open/async_open_bench.cpp` creates a deterministic 50 MiB short-line fixture, opens it through the same `DocumentWorkflow::openAsync` path as the application, records the first read-progress callback and final publication time, and runs a 1 ms Qt Core timer as an event-loop heartbeat. Run with the Release build using `build/note_async_open_bench.exe`. The fixture is written immediately before opening, so the observed read is warm-cache. The heartbeat is a Core event-loop proxy and does not include QWidget painting or a physical display.
+
+Five fresh-process runs on the current Windows host (Windows NT 10.0.26300.0; GCC 15.2.0; Qt 6.9.1; CMake 4.1.0/Ninja; CPU model, RAM, and storage device unavailable) produced:
+
+| Run | First progress | Full open/publication | Timer beats | Maximum heartbeat gap |
+|---:|---:|---:|---:|---:|
+| 1 | 10 ms | 286 ms | 268 | 4 ms |
+| 2 | 8 ms | 285 ms | 262 | 4 ms |
+| 3 | 9 ms | 286 ms | 266 | 2 ms |
+| 4 | 9 ms | 287 ms | 267 | 2 ms |
+| 5 | 10 ms | 288 ms | 263 | 2 ms |
+| **Median** | **9 ms** | **286 ms** | **266** | **2 ms** |
+
+These runs show chunk reads, decoding, line-ending normalization, and piece-index construction completing while the Qt Core event loop continues servicing timer callbacks on this host. The medians are descriptive for five warm-cache runs, not a p95 or formal budget result. No process memory sampler was attached, so peak/idle RSS and memory overhead are **not measured**. The code publishes only after the full file and index have completed; it does not progressively reveal an incomplete buffer. Cancellation is checked between chunks and after index construction, while the current index build itself is not interruptible. File-change detection compares final size and modification time; an edit that preserves both values may go undetected.
 
 ## Phase 02 document foundation benchmarks
 
@@ -104,4 +121,4 @@ The gap buffer performs well for local edits but moves large spans for distant e
 
 An additional five-run 8 MiB single-line fixture checks behavior when there are no line breaks. Median build times were 2.123 ms for the gap buffer, 1.068 ms for the flat piece table, and 22.539 ms for the indexed treap. The treap reported one line, 8.683 MiB estimated storage, 0.001 ms p95 for its 1,000 random inserts and deletes, and 0.005 ms p95 for 64 KiB range reads. This fixture measures buffer/index behavior only; it does not measure shaping, painting, or interactive navigation across an extreme line.
 
-The File Service numbers measure synchronous full-file opening and atomic save on this warm-cache host. They do not show that the application remains responsive while opening: there is no editor UI, background worker, progressive document publication, or allocator/RSS sampling in this milestone. The current open implementation reads and decodes the complete file before returning. No key-to-screen, scrolling, idle-memory, 4 GB device, HDD, or product performance budget claim follows from these results.
+The earlier File Service numbers measured synchronous full-file opening and atomic save on this warm-cache host. The current open implementation uses bounded chunk reads on a background worker and publishes only after validation and indexing. The earlier timings remain useful as file-service history but do not measure the current async path. No key-to-screen, scrolling, idle-memory, peak RSS, 4 GB device, HDD, or product performance budget claim follows from these results.

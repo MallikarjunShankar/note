@@ -24,8 +24,10 @@ The modified state is derived from the buffer's monotonically increasing revisio
 
 `FileService` returns an opened buffer and metadata; callers transfer both to `DocumentManager` when registration succeeds. Buffer text, document metadata, open-document ownership, and file persistence each have one owner.
 
+Async open constructs the buffer privately on a bounded background worker and returns it to `DocumentWorkflow` only after decoding, line-ending normalization, file-change checking, and index construction succeed. The worker never mutates a registered document or tab list. Cancellation or failure discards its private result; successful publication and active-document/tab updates occur on the workflow's UI thread.
+
 ## Tabs and application workflow
 
 `TabManager` owns only the ordered list of `DocumentId` values. It stores no `Document`, path, title, modified flag, or text. `DocumentManager` remains the lifetime owner and authoritative active-document owner. The application `DocumentWorkflow` coordinates create/open/save/close operations across the manager, tab list, and `FileService`; it does not mirror document state. Closing the active tab selects the tab now at the same position, or the previous final tab, and closing the last tab clears active identity.
 
-The UI derives tab labels and modified indicators from the document model each time it synchronizes. Its temporary preview holds only a bounded 16 KiB display projection; the buffer remains authoritative. The preview is read-only and is scheduled to be replaced by the production Editor View.
+The UI derives tab labels and modified indicators from the document model each time it synchronizes. Its temporary preview holds only a bounded 16 KiB display projection; the buffer remains authoritative. The preview is read-only and is scheduled to be replaced by the production Editor View. Pending open requests are workflow operation state, not documents or tabs; duplicate canonical paths share one pending request.
