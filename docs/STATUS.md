@@ -10,6 +10,7 @@ This is the current status ledger for Note. “Complete” means implemented and
 | Application shell | **Partial** | Minimal QApplication/QMainWindow shell exists. Lifecycle, application state, configuration loading, settings/theme managers, command registry, and usable editor window remain. |
 | Technology evaluation | **Partial** | Isolated project-owned widget and gap/piece buffer benchmarks are recorded in `docs/EDITOR_PROTOTYPE.md`. QScintilla was not measured; the low-end reference device and cross-platform validation remain outstanding. |
 | Editor architecture decision | **Partial** | Project-owned viewport renderer and piece-table storage model are provisionally selected from the prototype. Production indexed piece/line structures and reference-device performance are not yet validated. |
+| Hardware targets and performance budgets | **Partial** | Provisional minimum profile and repeatable measurement/stress methodology are documented in `docs/PERFORMANCE.md`. Values remain unconfirmed; no physical low-end validation or production performance claim has been made. |
 | V1 release readiness | **Not started** | No agreed editor features, file handling, recovery, platform validation, performance verification, or release packaging are complete. |
 
 ## System status

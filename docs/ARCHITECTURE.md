@@ -2,7 +2,7 @@
 
 ## Product constraints
 
-Note prioritises low startup time, low idle memory and responsive editing over customisation. It must run on Windows, Linux and macOS, render only the viewport, update incrementally, support large files with graceful degradation, and avoid embedded browser runtimes. The numerical performance budget in section 7.0 of `PROJECT_SPEC.md` is provisional until a low-end reference device is named.
+Note prioritises low startup time, low idle memory and responsive editing over customisation. It must run on Windows, Linux and macOS, render only the viewport, update incrementally, support large files with graceful degradation, and avoid embedded browser runtimes. The numerical performance budget in section 7.0 of `PROJECT_SPEC.md` is provisional until a low-end reference device is named. [`PERFORMANCE.md`](PERFORMANCE.md) records the provisional engineering hardware profile, measurement budgets, and repeatable validation method; it does not replace the product spec.
 
 ## Candidate evaluation
 

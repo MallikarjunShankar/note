@@ -18,3 +18,7 @@ The specification identifies ten decisions as open. Current recommendation and r
 ## Benchmark gate
 
 The editor architecture prototype is complete on this Windows host; see `docs/EDITOR_PROTOTYPE.md` for the actual setup, tests, and measurements. Before claiming the performance budget, name the low-end reference device and record true cold start, idle memory, keystroke-to-screen latency, real-display scrolling/rendering, and progressive opening of a 50 MiB file. Validate Linux/macOS builds and confirm the balanced piece/line index under fragmentation. Section 7.0 targets remain provisional until the project owner confirms them.
+
+## Hardware and performance budget status
+
+[`PERFORMANCE.md`](PERFORMANCE.md) defines a provisional 2-core/4-thread, 4 GB RAM minimum engineering profile and supplementary development-machine working targets. These do not change the stricter provisional product targets in `PROJECT_SPEC.md` §7.0 (300 ms startup and 50 MB idle memory among them). Neither profile is confirmed by the owner or validated on physical low-end hardware. Keep measurements advisory until the reference device and product budgets are confirmed.

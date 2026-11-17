@@ -10,6 +10,7 @@ The repository began with only the project specification. The CMake C++20/Qt 6 W
 
 - [Implementation status](STATUS.md)
 - [Architecture and stack evaluation](ARCHITECTURE.md)
+- [Hardware targets and performance validation](PERFORMANCE.md)
 - [Editor implementation comparison](EDITOR_EVALUATION.md)
 - [Project-owned editor prototype and measurements](EDITOR_PROTOTYPE.md)
 - [System boundaries](SYSTEMS.md)
