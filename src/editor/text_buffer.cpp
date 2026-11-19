@@ -83,6 +83,17 @@ struct TextBuffer::Impl {
         std::vector<std::size_t> newlineOffsets;
         std::vector<LineEnding> endings;
 
+        void assign(std::string&& value, std::vector<LineEnding>&& valueEndings) {
+            text = std::move(value);
+            endings = std::move(valueEndings);
+            newlineOffsets.clear();
+            newlineOffsets.reserve(endings.size());
+            for (std::size_t i = 0; i < text.size(); ++i)
+                if (text[i] == '\n') newlineOffsets.push_back(i);
+            if (newlineOffsets.size() != endings.size())
+                throw std::logic_error("newline metadata mismatch");
+        }
+
         void append(std::string_view value, const std::vector<LineEnding>& valueEndings) {
             const auto base = text.size();
             text.append(value);
@@ -334,6 +345,25 @@ struct TextBuffer::Impl {
                                   src.endings.begin() + static_cast<std::ptrdiff_t>(lastIndex));
         appendSnapshot(node->right.get(), output);
     }
+    bool visitSegments(const Node* node, const TextSegmentVisitor& visitor) const {
+        if (!node) return true;
+        if (!visitSegments(node->left.get(), visitor)) return false;
+        const auto& src = source(node->piece.added);
+        const auto first = std::lower_bound(src.newlineOffsets.begin(),
+                                            src.newlineOffsets.end(),
+                                            node->piece.offset);
+        const auto last = std::lower_bound(first, src.newlineOffsets.end(),
+                                           node->piece.offset + node->piece.length);
+        const auto firstIndex =
+            static_cast<std::size_t>(first - src.newlineOffsets.begin());
+        const auto endingCount = static_cast<std::size_t>(last - first);
+        const auto text = std::string_view(src.text).substr(
+            node->piece.offset, node->piece.length);
+        const auto endings = std::span<const LineEnding>(src.endings).subspan(
+            firstIndex, endingCount);
+        if (!visitor(text, endings)) return false;
+        return visitSegments(node->right.get(), visitor);
+    }
     std::size_t countNodes(const Node* node) const noexcept {
         return node ? 1 + countNodes(node->left.get()) + countNodes(node->right.get()) : 0;
     }
@@ -349,8 +379,9 @@ TextBuffer::TextBuffer() : impl_(std::make_unique<Impl>()) {}
 TextBuffer::TextBuffer(std::string_view utf8Text) : TextBuffer() {
     auto value = normalize(utf8Text);
     if (!value.text.empty()) {
-        impl_->original.append(value.text, value.endings);
-        impl_->root = impl_->makeNode({false, 0, value.text.size()});
+        const auto size = value.text.size();
+        impl_->original.assign(std::move(value.text), std::move(value.endings));
+        impl_->root = impl_->makeNode({false, 0, size});
     }
 }
 TextBuffer::TextBuffer(TextSnapshot canonicalText) : TextBuffer() {
@@ -359,8 +390,10 @@ TextBuffer::TextBuffer(TextSnapshot canonicalText) : TextBuffer() {
             canonicalText.lineEndings.size())
         throw std::invalid_argument("canonical text snapshot is inconsistent");
     if (!canonicalText.utf8.empty()) {
-        impl_->original.append(canonicalText.utf8, canonicalText.lineEndings);
-        impl_->root = impl_->makeNode({false, 0, canonicalText.utf8.size()});
+        const auto size = canonicalText.utf8.size();
+        impl_->original.assign(std::move(canonicalText.utf8),
+                           std::move(canonicalText.lineEndings));
+        impl_->root = impl_->makeNode({false, 0, size});
     }
 }
 TextBuffer::~TextBuffer() = default;
@@ -417,6 +450,10 @@ TextSnapshot TextBuffer::snapshot() const {
     result.lineEndings.reserve(impl_->newlines(impl_->root));
     impl_->appendSnapshot(impl_->root.get(), result);
     return result;
+}
+bool TextBuffer::visitSegments(const TextSegmentVisitor& visitor) const {
+    if (!visitor) throw std::invalid_argument("text segment visitor must be set");
+    return impl_->visitSegments(impl_->root.get(), visitor);
 }
 void TextBuffer::insert(std::size_t offset, std::string_view utf8Text, LineEnding bareLineEnding) {
     replace(offset, 0, utf8Text, bareLineEnding);

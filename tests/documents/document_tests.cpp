@@ -85,6 +85,40 @@ void testTextBuffer() {
     require(lineSnapshot.lineEndings == std::vector<LineEnding>{LineEnding::crlf, LineEnding::cr,
             LineEnding::lf}, "line-ending metadata");
 
+    TextBuffer segmented("one\r\ntwo\n");
+    segmented.insert(4, "λ\rthree", LineEnding::cr);
+    const auto expectedSegments = segmented.snapshot();
+    std::string joinedSegments;
+    std::vector<LineEnding> joinedEndings;
+    std::size_t segmentCount = 0;
+    require(segmented.visitSegments(
+                [&](std::string_view text, std::span<const LineEnding> endings) {
+                    ++segmentCount;
+                    joinedSegments.append(text);
+                    joinedEndings.insert(joinedEndings.end(), endings.begin(), endings.end());
+                    return true;
+                }),
+            "segment traversal should complete");
+    require(segmentCount > 1 && joinedSegments == expectedSegments.utf8 &&
+                joinedEndings == expectedSegments.lineEndings,
+            "segment traversal preserves text and line-ending order");
+    std::size_t stoppedVisits = 0;
+    require(!segmented.visitSegments(
+                [&](std::string_view, std::span<const LineEnding>) {
+                    ++stoppedVisits;
+                    return false;
+                }) &&
+                stoppedVisits == 1,
+            "segment traversal stops when requested");
+    std::size_t emptyVisits = 0;
+    require(empty.visitSegments(
+                [&](std::string_view, std::span<const LineEnding>) {
+                    ++emptyVisits;
+                    return true;
+                }) &&
+                emptyVisits == 0,
+            "empty buffer has no text segments");
+
     TextBuffer defaultEnding("a\r\nb");
     defaultEnding.insert(defaultEnding.sizeBytes(), "\nnext", LineEnding::crlf);
     require(defaultEnding.snapshot().lineEndings == std::vector<LineEnding>{LineEnding::crlf,

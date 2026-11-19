@@ -94,7 +94,6 @@ FileOperationResult writeDocument(Document& document, const std::filesystem::pat
                                   bool expectAbsent) {
     savedRevision = document.buffer().revision();
     savedMetadata = document.metadata();
-    const auto snapshot = document.buffer().snapshot();
     const auto qpath = platform::pathToQString(path);
     QCryptographicHash contentHash(QCryptographicHash::Sha256);
     QSaveFile file(qpath);
@@ -120,7 +119,7 @@ FileOperationResult writeDocument(Document& document, const std::filesystem::pat
     constexpr std::size_t chunkLimit = 64 * 1024;
     std::string chunk;
     chunk.reserve(chunkLimit + 4);
-    std::size_t newlineIndex = 0;
+    std::size_t newlineCount = 0;
     auto flush = [&]() -> bool {
         if (chunk.empty()) return true;
         bool ok = false;
@@ -164,37 +163,67 @@ FileOperationResult writeDocument(Document& document, const std::filesystem::pat
         return true;
     };
 
-    std::size_t cursor = 0;
-    while (cursor < snapshot.utf8.size()) {
-        const auto newline = snapshot.utf8.find('\n', cursor);
-        const auto end = newline == std::string::npos ? snapshot.utf8.size() : newline;
-        if (!appendBytes(std::string_view(snapshot.utf8).substr(cursor, end - cursor))) {
-            const auto message = utf8(file.errorString());
-            file.cancelWriting();
-            return {false, message};
-        }
-        if (newline == std::string::npos) break;
-        std::string_view ending;
-        switch (snapshot.lineEndings.at(newlineIndex++)) {
-        case editor::LineEnding::lf: ending = "\n"; break;
-        case editor::LineEnding::crlf: ending = "\r\n"; break;
-        case editor::LineEnding::cr: ending = "\r"; break;
-        }
-        if (!appendBytes(ending)) {
-            const auto message = utf8(file.errorString());
-            file.cancelWriting();
-            return {false, message};
-        }
-        cursor = newline + 1;
+    std::array<std::size_t, 3> endingCounts{};
+    editor::LineEnding firstEnding = editor::LineEnding::lf;
+    bool hasFirstEnding = false;
+    bool hasMixedEndings = false;
+    bool inconsistentEndings = false;
+    const auto completed = document.buffer().visitSegments(
+        [&](std::string_view text, std::span<const editor::LineEnding> endings) {
+            std::size_t cursor = 0;
+            std::size_t endingIndex = 0;
+            while (cursor < text.size()) {
+                const auto newline = text.find('\n', cursor);
+                const auto end = newline == std::string_view::npos
+                    ? text.size() : newline;
+                if (!appendBytes(text.substr(cursor, end - cursor))) return false;
+                if (newline == std::string_view::npos) break;
+                if (endingIndex >= endings.size()) {
+                    inconsistentEndings = true;
+                    return false;
+                }
+                const auto ending = endings[endingIndex++];
+                std::string_view endingBytes;
+                switch (ending) {
+                case editor::LineEnding::lf: endingBytes = "\n"; break;
+                case editor::LineEnding::crlf: endingBytes = "\r\n"; break;
+                case editor::LineEnding::cr: endingBytes = "\r"; break;
+                default:
+                    inconsistentEndings = true;
+                    return false;
+                }
+                ++endingCounts[static_cast<std::size_t>(ending)];
+                ++newlineCount;
+                if (!hasFirstEnding) {
+                    firstEnding = ending;
+                    hasFirstEnding = true;
+                } else if (firstEnding != ending) {
+                    hasMixedEndings = true;
+                }
+                if (!appendBytes(endingBytes)) return false;
+                cursor = newline + 1;
+            }
+            if (endingIndex != endings.size()) {
+                inconsistentEndings = true;
+                return false;
+            }
+            return true;
+        });
+    if (!completed) {
+        const auto message = inconsistentEndings
+            ? std::string("Text buffer newline metadata is inconsistent.")
+            : utf8(file.errorString());
+        file.cancelWriting();
+        return {false, message};
+    }
+    if (newlineCount != document.buffer().lineCount() - 1) {
+        file.cancelWriting();
+        return {false, "Text buffer newline metadata is inconsistent."};
     }
     if (!flush()) {
         const auto message = utf8(file.errorString());
         file.cancelWriting();
         return {false, message};
-    }
-    if (newlineIndex != snapshot.lineEndings.size()) {
-        file.cancelWriting();
-        return {false, "Text buffer newline metadata is inconsistent."};
     }
     const auto current = inspectFile(path);
     if (!current.error.empty()) {
@@ -215,9 +244,12 @@ FileOperationResult writeDocument(Document& document, const std::filesystem::pat
     std::copy_n(reinterpret_cast<const std::uint8_t*>(digest.constData()), savedMetadata.file->sha256.size(),
                 savedMetadata.file->sha256.begin());
     savedMetadata.file->hasFingerprint = true;
-    if (!snapshot.lineEndings.empty()) {
-        savedMetadata.preferredLineEnding = preferredEnding(snapshot.lineEndings);
-        savedMetadata.mixedLineEndings = mixedEndings(snapshot.lineEndings);
+    if (hasFirstEnding) {
+        const auto best = static_cast<std::size_t>(
+            std::distance(endingCounts.begin(),
+                          std::max_element(endingCounts.begin(), endingCounts.end())));
+        savedMetadata.preferredLineEnding = static_cast<editor::LineEnding>(best);
+        savedMetadata.mixedLineEndings = hasMixedEndings;
     }
     return {true, {}};
 }

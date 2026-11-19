@@ -2,7 +2,9 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -20,6 +22,9 @@ struct TextSnapshot {
     std::string utf8; // Canonical LF separators.
     std::vector<LineEnding> lineEndings; // One entry per LF in utf8.
 };
+
+using TextSegmentVisitor =
+    std::function<bool(std::string_view, std::span<const LineEnding>)>;
 
 // Offsets and lengths are UTF-8 byte coordinates. Public edit boundaries must
 // also be Unicode scalar boundaries. Line separators are canonical LF bytes;
@@ -49,6 +54,9 @@ public:
     [[nodiscard]] unsigned char byteAt(std::size_t offset) const;
     [[nodiscard]] LineEnding lineEnding(std::size_t newlineIndex) const;
     [[nodiscard]] TextSnapshot snapshot() const;
+    // Views are valid only during the callback. Visitors must not mutate this
+    // buffer; returning false stops traversal and makes this method return false.
+    [[nodiscard]] bool visitSegments(const TextSegmentVisitor& visitor) const;
 
     void insert(std::size_t offset, std::string_view utf8Text,
                 LineEnding bareLineEnding = LineEnding::lf);
