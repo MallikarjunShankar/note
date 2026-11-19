@@ -70,6 +70,13 @@ bool CursorManager::addSecondaryCursor(std::size_t offset) {
     return true;
 }
 
+void CursorManager::setSecondaryCursor(std::size_t index, std::size_t offset) {
+    if (index >= secondary_.size()) throw std::out_of_range("secondary cursor index");
+    secondary_[index].offset = clampOffset(offset);
+    secondary_[index].preferredColumn = lineAndColumn(secondary_[index].offset).column;
+    syncToBuffer();
+}
+
 bool CursorManager::removeSecondaryCursor(std::size_t index) {
     if (index >= secondary_.size()) return false;
     secondary_.erase(secondary_.begin() +

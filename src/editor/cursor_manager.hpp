@@ -29,6 +29,7 @@ public:
     [[nodiscard]] const std::vector<std::size_t>& secondaryCursorOffsets() const noexcept;
     [[nodiscard]] std::size_t secondaryCursorOffset(std::size_t index) const;
     bool addSecondaryCursor(std::size_t offset);
+    void setSecondaryCursor(std::size_t index, std::size_t offset);
     bool removeSecondaryCursor(std::size_t index);
     void clearSecondaryCursors();
 

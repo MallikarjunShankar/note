@@ -16,7 +16,7 @@ These are the small Phase 02 interfaces available under `src/`. Qt is confined t
 - `moveLeft`/`moveRight` move every active cursor horizontally. `moveUp`/`moveDown` move every active cursor vertically and retain a preferred byte column across shorter lines.
 - `moveToLineColumn(line, column)` uses 0-based line and UTF-8 byte-column coordinates. Empty lines, end-of-line positions, trailing newline lines, and the final line are supported.
 - `primaryOffset`, `primaryLocation`, `cursorCount`, `secondaryCursorCount`, `secondaryCursorOffsets`, and `secondaryCursorOffset` provide read access.
-- `clearSecondaryCursors`, `removeSecondaryCursor`, and `syncToBuffer` manage secondary cursor state and stale offsets.
+- `clearSecondaryCursors`, `removeSecondaryCursor`, `setSecondaryCursor`, and `syncToBuffer` manage secondary cursor state and stale offsets.
 - `onTextReplaced(offset, removedBytes, insertedBytes)` adjusts cursor offsets after a completed buffer replacement. This is a cursor-state notification only; the manager does not insert or delete text.
 
 ## Selection Manager (`editor::SelectionManager`)
@@ -26,6 +26,14 @@ These are the small Phase 02 interfaces available under `src/`. Qt is confined t
 - `clearSelection` collapses one selection to its active endpoint; `clearSelections` removes all selections. `syncToBuffer` clamps state after external buffer changes.
 - `onTextReplaced(offset, removedBytes, insertedBytes)` applies an explicit endpoint transformation after a completed `TextBuffer` replacement. Insertions at an endpoint shift it forward; endpoints inside a removed range map to the replacement end; invalid edit coordinates throw rather than being guessed.
 - Selection state is independent of `CursorManager`; an editing or input controller supplies cursor endpoints when extending or moving selections.
+
+## Editing Engine (`editor::EditingEngine`)
+
+- `EditingEngine` accepts a mutable `TextBuffer` and references to the existing `CursorManager` and `SelectionManager`; it owns no text, cursor, or selection state.
+- `insertText`, `backspace`, `deleteForward`, and `insertNewline` operate on all cursor positions. `replaceSelections` and `deleteSelections` operate on all non-empty selection ranges, clear selections after success, and move corresponding cursors to the replacement end.
+- Operations use UTF-8 scalar boundaries and preserve `TextBuffer` line-ending metadata. Multiple edits are validated before mutation, reject duplicate/overlapping ranges, and apply in descending document order so offsets remain stable. Ambiguous edits throw `std::invalid_argument` rather than being discarded.
+- Editing methods return `EditBatch` records containing each offset and removed/inserted text. These records are the integration boundary for the future Undo/Redo Manager; no undo history is owned here.
+- `CursorManager::setSecondaryCursor` updates an existing secondary cursor without transferring cursor ownership to the editing engine.
 
 ## Document and manager
 
