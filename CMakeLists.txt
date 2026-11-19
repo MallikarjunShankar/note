@@ -111,6 +111,9 @@ if(BUILD_TESTING)
 
     add_executable(note_async_open_bench benchmarks/asynchronous_open/async_open_bench.cpp)
     target_link_libraries(note_async_open_bench PRIVATE note_app_core Qt6::Core)
+    if(WIN32)
+        target_link_libraries(note_async_open_bench PRIVATE Psapi)
+    endif()
 
     add_executable(note_editor_presentation_bench
         benchmarks/editor_presentation/editor_presentation_bench.cpp

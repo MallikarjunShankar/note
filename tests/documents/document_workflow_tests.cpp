@@ -2,6 +2,7 @@
 
 #include <QFile>
 #include <QCoreApplication>
+#include <QElapsedTimer>
 #include <QEventLoop>
 #include <QTemporaryDir>
 #include <QTimer>
@@ -39,6 +40,18 @@ void writeFile(const std::filesystem::path& path, const QByteArray& bytes) {
     QFile file(qpath);
     require(file.open(QIODevice::WriteOnly), "could not create test file");
     require(file.write(bytes) == bytes.size(), "could not write test file");
+}
+
+bool removeFileWhenAvailable(const QString& path) {
+    QElapsedTimer timer;
+    timer.start();
+    while (timer.elapsed() < 5000) {
+        if (!QFile::exists(path) || QFile::remove(path)) return true;
+        QEventLoop waitLoop;
+        QTimer::singleShot(10, &waitLoop, &QEventLoop::quit);
+        waitLoop.exec();
+    }
+    return !QFile::exists(path);
 }
 
 QByteArray readFile(const std::filesystem::path& path) {
@@ -254,6 +267,92 @@ void testAsynchronousProgressiveOpen() {
             "shutdown cancels pending work and suppresses callbacks and partial publication");
 }
 
+void testExternalModificationConflictAndReload() {
+    using namespace note::application;
+    using note::documents::ExternalFileState;
+    QTemporaryDir temporary;
+    require(temporary.isValid(), "temporary directory unavailable");
+    const auto path =
+        pathFromQString(temporary.filePath(QStringLiteral("external.txt")));
+    writeFile(path, QByteArray("original\n", 9));
+
+    DocumentWorkflow workflow;
+    const auto opened = workflow.open(path);
+    require(opened && opened.documentId, "open document for external-change checks");
+    const auto id = *opened.documentId;
+    auto* document = workflow.findDocument(id);
+    document->buffer().insert(document->buffer().sizeBytes(), " local");
+
+    bool changedReported = false;
+    bool missingReported = false;
+    workflow.setExternalFileChangeCallback(
+        [&](note::documents::DocumentId changedId, ExternalFileState state) {
+            if (changedId != id) return;
+            changedReported = changedReported || state == ExternalFileState::changed;
+            missingReported = missingReported || state == ExternalFileState::missing;
+        });
+
+    const QByteArray externalContents("external\r\n", 10);
+    writeFile(path, externalContents);
+    workflow.checkExternalChanges();
+    QEventLoop inspectionLoop;
+    QTimer inspectionTimeout;
+    inspectionTimeout.setSingleShot(true);
+    QObject::connect(&inspectionTimeout, &QTimer::timeout, &inspectionLoop,
+                     &QEventLoop::quit);
+    inspectionTimeout.start(10000);
+    while (!changedReported && inspectionTimeout.isActive())
+        inspectionLoop.exec();
+    require(changedReported, "external content changes are reported");
+
+    const auto save = workflow.save(id);
+    require(save.status == OperationStatus::conflict && document->modified() &&
+                readFile(path) == externalContents,
+            "save conflict preserves local edits and external file contents");
+    require(workflow.reloadAsync(id, false, {}, {}) == 0,
+            "reload refuses to discard local edits without confirmation");
+
+    bool reloadCompleted = false;
+    WorkflowResult reloadResult;
+    QEventLoop reloadLoop;
+    const auto generation = document->contentGeneration();
+    const auto reloadRequest = workflow.reloadAsync(
+        id, true, {},
+        [&](auto, WorkflowResult result) {
+            reloadResult = std::move(result);
+            reloadCompleted = true;
+            reloadLoop.quit();
+        });
+    require(reloadRequest != 0, "confirmed reload request is accepted");
+    QTimer reloadTimeout;
+    reloadTimeout.setSingleShot(true);
+    QObject::connect(&reloadTimeout, &QTimer::timeout, &reloadLoop,
+                     &QEventLoop::quit);
+    reloadTimeout.start(10000);
+    while (!reloadCompleted && reloadTimeout.isActive()) reloadLoop.exec();
+    require(reloadCompleted && reloadResult.status == OperationStatus::success &&
+                document->buffer().text() == "external\n" && !document->modified() &&
+                document->contentGeneration() == generation + 1,
+            "confirmed reload replaces contents without changing document identity");
+
+    require(removeFileWhenAvailable(temporary.filePath(QStringLiteral("external.txt"))),
+            "could not remove the test file before checking missing-file detection");
+    workflow.checkExternalChanges();
+    QEventLoop missingLoop;
+    QTimer missingTimeout;
+    missingTimeout.setSingleShot(true);
+    QObject::connect(&missingTimeout, &QTimer::timeout, &missingLoop,
+                     &QEventLoop::quit);
+    missingTimeout.start(10000);
+    while (!missingReported && missingTimeout.isActive()) missingLoop.exec();
+    require(missingReported, "external file removal is reported");
+    const auto saveMissing = workflow.save(id);
+    require(saveMissing.status == OperationStatus::conflict &&
+                !document->modified() &&
+                document->buffer().text() == "external\n",
+            "saving a missing file is rejected without changing document state");
+}
+
 } // namespace
 
 int main(int argc, char* argv[]) {
@@ -262,6 +361,7 @@ int main(int argc, char* argv[]) {
         testCreateOpenSwitchAndDuplicate();
         testSaveAsCollisionAndCloseChoices();
         testSaveFailureOnCloseAndUntitledSave();
+        testExternalModificationConflictAndReload();
         testAsynchronousProgressiveOpen();
         std::cout << "All document workflow tests passed.\n";
         return 0;
