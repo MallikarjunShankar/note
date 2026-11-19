@@ -11,6 +11,8 @@
 
 #include <cstddef>
 #include <optional>
+#include <string>
+#include <utility>
 
 namespace note::editor {
 class CursorManager;
@@ -23,11 +25,24 @@ struct EditorRenderConfiguration {
     QFont font;
     int tabWidth{4};
     int lineHeight{};
+    bool lineNumbers{true};
+    bool relativeLineNumbers{};
+    bool currentLineHighlight{true};
+    bool indentationGuides{};
+    bool showWhitespace{};
+    bool matchingOccurrences{};
+    bool wordWrap{};
     QColor foreground{QStringLiteral("#d7dee9")};
     QColor background{QStringLiteral("#1e222a")};
     QColor selection{QStringLiteral("#3d5a80")};
     QColor caret{QStringLiteral("#f2f5f8")};
     QColor matchingBracket{QStringLiteral("#66788a")};
+    QColor currentLine{QStringLiteral("#252b35")};
+    QColor lineNumber{QStringLiteral("#737d8c")};
+    QColor activeLineNumber{QStringLiteral("#d7dee9")};
+    QColor indentationGuide{QStringLiteral("#39414d")};
+    QColor whitespace{QStringLiteral("#687382")};
+    QColor matchingOccurrence{QStringLiteral("#3a4655")};
 };
 
 struct VisibleLineRange {
@@ -48,6 +63,11 @@ public:
 
     [[nodiscard]] VisibleLineRange visibleLineRange() const noexcept;
     [[nodiscard]] std::size_t firstVisibleLine() const noexcept;
+    [[nodiscard]] std::size_t firstVisibleSubrow() const noexcept;
+    [[nodiscard]] qreal lineNumberGutterWidth() const;
+    [[nodiscard]] qreal textOriginX() const;
+    [[nodiscard]] QString displayedLineNumber(std::size_t line) const;
+    [[nodiscard]] std::size_t visualRowCount(std::size_t line) const;
     void scrollToLine(std::size_t line);
     void setHorizontalOffset(qreal offset);
     [[nodiscard]] qreal horizontalOffset() const noexcept;
@@ -59,7 +79,9 @@ public:
     [[nodiscard]] QRectF cursorGeometry(std::size_t cursorIndex) const;
     [[nodiscard]] QVector<QRectF> selectionGeometry(std::size_t selectionIndex) const;
     [[nodiscard]] QVector<QRectF> matchingBracketGeometry() const;
+    [[nodiscard]] QVector<QRectF> matchingOccurrenceGeometry() const;
     [[nodiscard]] std::size_t lastPaintedLineCount() const noexcept;
+    [[nodiscard]] std::size_t lastPaintedVisualRowCount() const noexcept;
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -67,20 +89,46 @@ protected:
     void wheelEvent(QWheelEvent* event) override;
 
 private:
+    struct VisualRow {
+        std::size_t byteBegin{};
+        std::size_t byteEnd{};
+        qsizetype displayBegin{};
+        qsizetype displayEnd{};
+        qreal width{};
+    };
+
     struct LineLayout {
+        std::string source;
         QString display;
         QVector<qreal> xAtByte;
+        QVector<VisualRow> rows;
         qreal width{};
     };
 
     [[nodiscard]] int effectiveLineHeight() const;
     [[nodiscard]] VisibleLineRange calculateVisibleLineRange() const noexcept;
     [[nodiscard]] LineLayout layoutLine(std::size_t line) const;
+    [[nodiscard]] std::size_t rowForByte(const LineLayout& layout,
+                                         std::size_t lineStart,
+                                         std::size_t byteOffset) const;
     [[nodiscard]] qreal xForByte(const LineLayout& layout,
                                  std::size_t lineStart,
-                                 std::size_t byteOffset) const;
+                                 std::size_t byteOffset,
+                                 std::size_t rowIndex) const;
+    [[nodiscard]] std::pair<std::size_t, std::size_t> visibleByteWindow(
+        const LineLayout& layout, std::size_t lineStart,
+        std::size_t rowIndex) const;
     [[nodiscard]] qreal tabAdvance(qreal x) const;
-    [[nodiscard]] QPointF textOrigin(std::size_t line) const;
+    [[nodiscard]] qreal visualRowTop(std::size_t line,
+                                     std::size_t rowIndex) const;
+    [[nodiscard]] QPointF textOrigin(std::size_t line,
+                                     std::size_t rowIndex) const;
+    [[nodiscard]] std::optional<std::pair<std::size_t, std::size_t>>
+    activeWordRange() const;
+    [[nodiscard]] std::size_t nextScalar(std::size_t offset) const;
+    [[nodiscard]] std::size_t previousScalar(std::size_t offset) const;
+    [[nodiscard]] static bool isWordByte(unsigned char value) noexcept;
+    void scrollByVisualRows(int rows);
     void updateScrollBar();
     void invalidateViewport();
 
@@ -89,7 +137,9 @@ private:
     const editor::SelectionManager& selections_;
     EditorRenderConfiguration configuration_;
     qreal horizontalOffset_{};
+    std::size_t firstVisibleSubrow_{};
     std::size_t lastPaintedLines_{};
+    std::size_t lastPaintedVisualRows_{};
     std::optional<editor::BracketPair> matchingBrackets_;
 };
 

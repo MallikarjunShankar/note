@@ -111,6 +111,15 @@ if(BUILD_TESTING)
 
     add_executable(note_async_open_bench benchmarks/asynchronous_open/async_open_bench.cpp)
     target_link_libraries(note_async_open_bench PRIVATE note_app_core Qt6::Core)
+
+    add_executable(note_editor_presentation_bench
+        benchmarks/editor_presentation/editor_presentation_bench.cpp
+        src/ui/editor_renderer.cpp
+        src/ui/editor_renderer.hpp
+    )
+    target_include_directories(note_editor_presentation_bench PRIVATE src)
+    target_link_libraries(note_editor_presentation_bench PRIVATE
+        note_core Qt6::Widgets)
 endif()
 
 if(MSVC)
@@ -129,6 +138,7 @@ if(MSVC)
         target_compile_options(note_ui_smoke_tests PRIVATE /W4 /permissive-)
         target_compile_options(note_document_bench PRIVATE /W4 /permissive-)
         target_compile_options(note_async_open_bench PRIVATE /W4 /permissive-)
+        target_compile_options(note_editor_presentation_bench PRIVATE /W4 /permissive-)
     endif()
 else()
     target_compile_options(note PRIVATE -Wall -Wextra -Wpedantic)
@@ -146,5 +156,6 @@ else()
         target_compile_options(note_ui_smoke_tests PRIVATE -Wall -Wextra -Wpedantic)
         target_compile_options(note_document_bench PRIVATE -O2 -Wall -Wextra -Wpedantic)
         target_compile_options(note_async_open_bench PRIVATE -O2 -Wall -Wextra -Wpedantic)
+        target_compile_options(note_editor_presentation_bench PRIVATE -O2 -Wall -Wextra -Wpedantic)
     endif()
 endif()

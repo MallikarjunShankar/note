@@ -47,12 +47,14 @@ These are the small Phase 02 interfaces available under `src/`. Qt is confined t
 ## Editor Renderer (`ui::EditorRenderer`)
 
 - `EditorRenderer` is a Qt Widgets `QAbstractScrollArea` that accepts non-owning references to a `TextBuffer`, `CursorManager`, and `SelectionManager`. It owns viewport presentation state only and performs no editing or file I/O.
-- `EditorRenderConfiguration` centralizes font, tab width, line height, foreground, background, selection, and caret colors. Defaults are minimal and extensible without introducing the complete settings system.
+- `EditorRenderConfiguration` centralizes font, tab width, line height, line-number mode, current-line highlighting, indentation guides, whitespace visibility, matching occurrences, wrapping, and their foreground/background colors. Presentation options are in-memory renderer configuration; persistent settings and theme ownership remain future work.
 - `visibleLineRange`, `scrollToLine`, and `setHorizontalOffset` expose viewport positioning. Painting requests only visible line ranges plus one small guard row; it does not materialize the document.
 - `cursorGeometry` and `selectionGeometry` expose scalar-safe caret and single/multiline selection geometry. `offsetAtPosition` maps viewport coordinates to UTF-8 scalar boundaries; `ensureCursorVisible` scrolls a caret into view, and `refreshFromModel` updates viewport and scrollbar state after external edits.
-- Tabs use configurable tab stops and Unicode text is measured through Qt font metrics. Painting limits line processing to the viewport plus a small guard row.
+- Absolute or relative line numbers, active-line highlighting, indentation guides, visible spaces/tabs/line endings, and exact identifier-like occurrence highlighting are supported. Occurrence matching is case-sensitive, syntax-agnostic, and limited to visible row windows.
+- Optional wrapping breaks at whitespace where possible and otherwise at UTF-8 scalar boundaries. Wrapped hit-testing, cursor/selection geometry, and wheel scrolling follow visual rows. The vertical scrollbar still represents logical lines rather than total wrapped rows, so its thumb is not proportional to wrapped document height.
+- Tabs use configurable tab stops and Unicode text is measured through Qt font metrics. Painting limits line processing to the viewport plus a small guard row; wrapped layout still processes each visible logical line in full, so exceptionally long lines can be expensive.
 - `setMatchingBrackets` supplies cached matching offsets; matching outlines are painted only on their visible lines. The renderer never performs bracket searches itself.
-- The renderer is tested offscreen; this does not establish real-display latency or performance targets.
+- The renderer and presentation behavior are tested offscreen. A Release offscreen benchmark measures repeated viewport paints on a deterministic 100,000-line fixture; neither test nor benchmark establishes real-display latency or performance targets.
 
 ## Bracket Manager (`editor::BracketManager`)
 

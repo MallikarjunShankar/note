@@ -100,7 +100,8 @@ int main(int argc, char* argv[]) {
         const auto lambdaWidth =
             QFontMetricsF(editor->renderer()->configuration().font)
                 .horizontalAdvance(QString::fromUtf8("λ"));
-        const QPointF lambdaEnd(lambdaWidth, 10);
+        const QPointF lambdaEnd(editor->renderer()->textOriginX() + lambdaWidth,
+                                10);
         sendMouseClick(*editor->renderer()->viewport(), lambdaEnd, Qt::AltModifier);
         require(editor->cursors().cursorCount() == 2 &&
                     active->buffer().isScalarBoundary(
@@ -125,9 +126,11 @@ int main(int argc, char* argv[]) {
         require(active->buffer().text() == "λ", "paste inserts clipboard text");
 
         auto* viewport = editor->renderer()->viewport();
-        const auto clickPosition = QPointF(0, editor->renderer()->configuration().lineHeight > 0
-                                                  ? editor->renderer()->configuration().lineHeight / 2
-                                                  : 10);
+        const auto clickPosition = QPointF(
+            editor->renderer()->textOriginX(),
+            editor->renderer()->configuration().lineHeight > 0
+                ? editor->renderer()->configuration().lineHeight / 2
+                : 10);
         QMouseEvent press(QEvent::MouseButtonPress, clickPosition, clickPosition, clickPosition,
                           Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
         QApplication::sendEvent(viewport, &press);
@@ -136,7 +139,8 @@ int main(int argc, char* argv[]) {
         QMouseEvent dragPress(QEvent::MouseButtonPress, clickPosition, clickPosition, clickPosition,
                               Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
         QApplication::sendEvent(viewport, &dragPress);
-        const QPointF dragPosition(100, clickPosition.y());
+        const QPointF dragPosition(editor->renderer()->textOriginX() + 100,
+                                   clickPosition.y());
         QMouseEvent dragMove(QEvent::MouseMove, dragPosition, dragPosition, dragPosition,
                              Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
         QApplication::sendEvent(viewport, &dragMove);
@@ -314,7 +318,8 @@ int main(int argc, char* argv[]) {
         openedEditor->selections().addSelection(0, 0);
         const auto secondCursorX =
             QFontMetricsF(font).horizontalAdvance(QStringLiteral("re"));
-        const QPointF secondCursorPosition(secondCursorX, 10);
+        const QPointF secondCursorPosition(
+            openedEditor->renderer()->textOriginX() + secondCursorX, 10);
         sendMouseClick(*openedEditor->renderer()->viewport(),
                        secondCursorPosition, Qt::AltModifier);
         require(openedEditor->cursors().cursorCount() == 2 &&
@@ -444,7 +449,8 @@ int main(int argc, char* argv[]) {
                 "Alt+Click removes the secondary cursor and matching selection");
 
         const auto clickX = QFontMetricsF(font).horizontalAdvance(QStringLiteral("r"));
-        const QPointF doubleClickPosition(clickX, 10);
+        const QPointF doubleClickPosition(
+            openedEditor->renderer()->textOriginX() + clickX, 10);
         QMouseEvent doubleClick(QEvent::MouseButtonDblClick, doubleClickPosition,
                                 doubleClickPosition, doubleClickPosition, Qt::LeftButton,
                                 Qt::LeftButton, Qt::NoModifier);
