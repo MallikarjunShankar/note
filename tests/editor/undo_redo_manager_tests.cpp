@@ -4,6 +4,7 @@
 #include "editor/text_buffer.hpp"
 #include "editor/undo_redo_manager.hpp"
 
+#include <array>
 #include <iostream>
 #include <stdexcept>
 
@@ -102,6 +103,65 @@ void testSelectionCursorAndMultiCursorState() {
             "redo restores cleared selections");
 }
 
+void testMixedMultiCursorDeletionAndTargetedInsertion() {
+    TextBuffer text("abcd");
+    CursorManager cursors(text);
+    SelectionManager selections(text);
+    EditingEngine editing(text, cursors, selections);
+    UndoRedoManager history(text, cursors, selections, editing);
+
+    cursors.setPrimaryCursor(2);
+    require(cursors.addSecondaryCursor(4), "mixed deletion secondary cursor");
+    selections.setSelection(0, 1, 2);
+    selections.addSelection(4, 4);
+    (void)history.backspace();
+    require(text.text() == "ac", "mixed multi-cursor backspace");
+    require(history.undo() && text.text() == "abcd" &&
+                cursors.primaryOffset() == 2 &&
+                cursors.secondaryCursorOffset(0) == 4 &&
+                selections.selection(0).anchor == 1 &&
+                selections.selection(0).active == 2,
+            "mixed deletion undo restores all cursor and selection state");
+    require(history.redo() && text.text() == "ac",
+            "mixed multi-cursor deletion redoes atomically");
+
+    TextBuffer targetText("a)b");
+    CursorManager targetCursors(targetText);
+    SelectionManager targetSelections(targetText);
+    EditingEngine targetEditing(targetText, targetCursors, targetSelections);
+    UndoRedoManager targetHistory(targetText, targetCursors,
+                                  targetSelections, targetEditing);
+    targetCursors.setPrimaryCursor(1);
+    require(targetCursors.addSecondaryCursor(3), "target insertion secondary cursor");
+    const std::array<std::size_t, 1> target{1};
+    (void)targetHistory.insertTextAtCursorIndices(target, ")");
+    require(targetText.text() == "a)b)", "targeted edit is recorded");
+    require(targetHistory.undo() && targetText.text() == "a)b" &&
+                targetCursors.primaryOffset() == 1 &&
+                targetCursors.secondaryCursorOffset(0) == 3,
+            "targeted insertion undo restores all cursor positions");
+    require(targetHistory.redo() && targetText.text() == "a)b)",
+            "targeted insertion redo");
+}
+
+void testExplicitTransactionCapturesFinalCursorState() {
+    TextBuffer text;
+    CursorManager cursors(text);
+    SelectionManager selections(text);
+    EditingEngine editing(text, cursors, selections);
+    UndoRedoManager history(text, cursors, selections, editing);
+
+    history.beginTransaction();
+    (void)history.insertText("()");
+    cursors.moveLeft();
+    history.endTransaction();
+    require(history.undo() && text.text().empty(),
+            "explicit transaction undo");
+    require(history.redo() && text.text() == "()" &&
+                cursors.primaryOffset() == 1,
+            "explicit transaction stores the final adjusted cursor state");
+}
+
 void testUnicodeAndLineEndings() {
     TextBuffer text("a\r\nλ\rb\nc");
     const auto original = text.snapshot();
@@ -179,6 +239,8 @@ int main() {
         testInsertDeleteAndEmptyHistory();
         testGroupingAndBoundaries();
         testSelectionCursorAndMultiCursorState();
+        testMixedMultiCursorDeletionAndTargetedInsertion();
+        testExplicitTransactionCapturesFinalCursorState();
         testUnicodeAndLineEndings();
         testRedoInvalidationAndMemoryLimit();
         testFailureSafety();

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "editor/bracket_manager.hpp"
 #include "editor/selection_manager.hpp"
 
 #include <QAbstractScrollArea>
@@ -9,6 +10,7 @@
 #include <QVector>
 
 #include <cstddef>
+#include <optional>
 
 namespace note::editor {
 class CursorManager;
@@ -25,6 +27,7 @@ struct EditorRenderConfiguration {
     QColor background{QStringLiteral("#1e222a")};
     QColor selection{QStringLiteral("#3d5a80")};
     QColor caret{QStringLiteral("#f2f5f8")};
+    QColor matchingBracket{QStringLiteral("#66788a")};
 };
 
 struct VisibleLineRange {
@@ -51,9 +54,11 @@ public:
     [[nodiscard]] std::size_t offsetAtPosition(const QPointF& position) const;
     void ensureCursorVisible(std::size_t offset);
     void refreshFromModel();
+    void setMatchingBrackets(std::optional<editor::BracketPair> pair);
 
     [[nodiscard]] QRectF cursorGeometry(std::size_t cursorIndex) const;
     [[nodiscard]] QVector<QRectF> selectionGeometry(std::size_t selectionIndex) const;
+    [[nodiscard]] QVector<QRectF> matchingBracketGeometry() const;
     [[nodiscard]] std::size_t lastPaintedLineCount() const noexcept;
 
 protected:
@@ -85,6 +90,7 @@ private:
     EditorRenderConfiguration configuration_;
     qreal horizontalOffset_{};
     std::size_t lastPaintedLines_{};
+    std::optional<editor::BracketPair> matchingBrackets_;
 };
 
 } // namespace note::ui

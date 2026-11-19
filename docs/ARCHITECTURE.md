@@ -28,6 +28,7 @@ The recommendation is technically informed but still provisional: measurements u
 - `src/application/document_workflow.*`: coordinates document creation/open/save/close, the Document Manager, and tab order without owning document content.
 - `src/ui/main_window.*`: File actions, native dialogs, tab bar, close prompts, status presentation, and per-document editor-view lifecycle.
 - `src/ui/editor_view.*`: per-document Qt input adapter composing the framework-independent cursor, selection, editing, and undo/redo managers with the renderer; owns editor state for the lifetime of an open document.
+- `src/editor/bracket_manager.*`: framework-independent bracket/quote pairing configuration and on-demand nested matching over UTF-8 byte positions.
 - `src/ui/document_preview.*`: bounded, read-only legacy projection retained in the build; the main window now uses the project-owned editor view instead.
 - `src/ui/editor_renderer.*`: project-owned Qt Widgets viewport that paints visible buffer lines, selections, and cursors from non-owning editor-manager references and supports hit testing and scrolling.
 - `src/editor/text_buffer.*`: framework-independent UTF-8 piece-table buffer with an indexed implicit-treap piece sequence and newline metadata.

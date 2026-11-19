@@ -11,9 +11,12 @@
 
 #include <algorithm>
 #include <cctype>
+#include <limits>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 namespace note::ui {
 
@@ -21,6 +24,7 @@ EditorView::EditorView(editor::TextBuffer& buffer,
                        editor::LineEnding preferredLineEnding,
                        QWidget* parent)
     : QWidget(parent), buffer_(buffer), cursors_(buffer), selections_(buffer),
+      brackets_(buffer),
       editing_(buffer, cursors_, selections_),
       history_(buffer, cursors_, selections_, editing_),
       preferredLineEnding_(preferredLineEnding) {
@@ -39,6 +43,10 @@ EditorView::EditorView(editor::TextBuffer& buffer,
 editor::TextBuffer& EditorView::buffer() const noexcept { return buffer_; }
 editor::CursorManager& EditorView::cursors() noexcept { return cursors_; }
 editor::SelectionManager& EditorView::selections() noexcept { return selections_; }
+editor::BracketManager& EditorView::brackets() noexcept {
+    lastMatchRevision_ = std::numeric_limits<std::uint64_t>::max();
+    return brackets_;
+}
 EditorRenderer* EditorView::renderer() const noexcept { return renderer_; }
 
 void EditorView::setDocumentChangedCallback(std::function<void()> callback) {
@@ -48,7 +56,10 @@ void EditorView::setDocumentChangedCallback(std::function<void()> callback) {
 void EditorView::refreshFromModel() {
     cursors_.syncToBuffer();
     selections_.syncToBuffer();
+    ensureSelectionAlignment();
+    normalizeCursorSelections();
     renderer_->refreshFromModel();
+    updateMatchingBrackets();
 }
 
 bool EditorView::eventFilter(QObject* watched, QEvent* event) {
@@ -103,8 +114,10 @@ bool EditorView::handleKeyPress(QKeyEvent* event) {
         return true;
     }
     if (event->matches(QKeySequence::SelectAll)) {
+        cursors_.clearSecondaryCursors();
         setPrimarySelection(0, buffer_.sizeBytes());
         renderer_->viewport()->update();
+        updateMatchingBrackets(true);
         return true;
     }
 
@@ -125,13 +138,11 @@ bool EditorView::handleKeyPress(QKeyEvent* event) {
         moveCursor(event->key(), shift);
         return true;
     case Qt::Key_Backspace:
-        if (hasAnySelection()) (void)history_.deleteSelections();
-        else (void)history_.backspace();
+        backspaceWithPairHandling();
         afterEdit();
         return true;
     case Qt::Key_Delete:
-        if (hasAnySelection()) (void)history_.deleteSelections();
-        else (void)history_.deleteForward();
+        (void)history_.deleteForward();
         afterEdit();
         return true;
     case Qt::Key_Return:
@@ -140,7 +151,8 @@ bool EditorView::handleKeyPress(QKeyEvent* event) {
         afterEdit();
         return true;
     case Qt::Key_Tab:
-        (void)history_.insertText("    ");
+        if (hasAnySelection()) (void)history_.replaceSelections("    ");
+        else (void)history_.insertText("    ");
         afterEdit();
         return true;
     default:
@@ -150,6 +162,10 @@ bool EditorView::handleKeyPress(QKeyEvent* event) {
     const auto text = event->text();
     if (!text.isEmpty() && text.at(0).isPrint()) {
         const auto utf8 = text.toUtf8();
+        if (utf8.size() == 1 && handleTextCharacter(utf8.at(0))) {
+            afterEdit();
+            return true;
+        }
         if (hasAnySelection())
             (void)history_.replaceSelections(
                 std::string_view(utf8.constData(), static_cast<std::size_t>(utf8.size())));
@@ -163,49 +179,124 @@ bool EditorView::handleKeyPress(QKeyEvent* event) {
 }
 
 void EditorView::moveCursor(int key, bool extendSelection) {
-    const auto previous = cursors_.primaryOffset();
-    auto anchor = selections_.selectionCount() > 0 && selections_.hasSelection(0)
-                      ? selections_.selection(0).anchor
-                      : previous;
-    if (!extendSelection && selections_.selectionCount() > 0 &&
-        selections_.hasSelection(0) &&
-        (key == Qt::Key_Left || key == Qt::Key_Right)) {
-        const auto range = selections_.normalizedRange(0);
-        cursors_.setPrimaryCursor(key == Qt::Key_Left ? range.begin : range.end);
-    } else {
-        switch (key) {
-        case Qt::Key_Left: cursors_.moveLeft(); break;
-        case Qt::Key_Right: cursors_.moveRight(); break;
-        case Qt::Key_Up: cursors_.moveUp(); break;
-        case Qt::Key_Down: cursors_.moveDown(); break;
-        case Qt::Key_Home: {
-            const auto location = cursors_.primaryLocation();
-            cursors_.moveToLineColumn(location.line, 0);
-            break;
-        }
-        case Qt::Key_End: {
-            const auto location = cursors_.primaryLocation();
+    ensureSelectionAlignment();
+    std::vector<std::size_t> anchors;
+    anchors.reserve(cursors_.cursorCount());
+    for (std::size_t index = 0; index < cursors_.cursorCount(); ++index)
+        anchors.push_back(selections_.selection(index).anchor);
+
+    switch (key) {
+    case Qt::Key_Left: cursors_.moveLeft(); break;
+    case Qt::Key_Right: cursors_.moveRight(); break;
+    case Qt::Key_Up: cursors_.moveUp(); break;
+    case Qt::Key_Down: cursors_.moveDown(); break;
+    case Qt::Key_Home:
+    case Qt::Key_End:
+        for (std::size_t index = 0; index < cursors_.cursorCount(); ++index) {
+            const auto location = cursors_.lineAndColumn(cursorOffset(index));
             const auto line = buffer_.lineRange(location.line);
-            cursors_.moveToLineColumn(location.line, line.end - line.begin);
-            break;
+            setCursorOffset(index, key == Qt::Key_Home
+                                       ? line.begin
+                                       : line.end);
         }
-        default: break;
+        break;
+    default: break;
+    }
+
+    if (!extendSelection && (key == Qt::Key_Left || key == Qt::Key_Right)) {
+        for (std::size_t index = 0; index < selections_.selectionCount(); ++index) {
+            if (!selections_.hasSelection(index)) continue;
+            const auto range = selections_.normalizedRange(index);
+            setCursorOffset(index, key == Qt::Key_Left ? range.begin : range.end);
         }
     }
-    if (extendSelection) setPrimarySelection(anchor, cursors_.primaryOffset());
-    else collapseSelectionsAt(cursors_.primaryOffset());
+    ensureSelectionAlignment();
+    if (extendSelection) {
+        for (std::size_t index = 0; index < cursors_.cursorCount(); ++index)
+            selections_.setSelection(index, anchors[index], cursorOffset(index));
+    } else {
+        collapseSelectionsAtCursors();
+    }
+    normalizeCursorSelections();
     renderer_->ensureCursorVisible(cursors_.primaryOffset());
     renderer_->viewport()->update();
+    updateMatchingBrackets();
 }
 
 void EditorView::setPrimarySelection(std::size_t anchor, std::size_t active) {
-    if (selections_.selectionCount() == 0) selections_.addSelection(anchor, active);
-    else selections_.setSelection(0, anchor, active);
+    ensureSelectionAlignment();
+    selections_.setSelection(0, anchor, active);
 }
 
 void EditorView::collapseSelectionsAt(std::size_t offset) {
+    cursors_.setPrimaryCursor(offset);
+    collapseSelectionsAtCursors();
+}
+
+void EditorView::collapseSelectionsAtCursors() {
     selections_.clearSelections();
-    selections_.addSelection(offset, offset);
+    for (std::size_t index = 0; index < cursors_.cursorCount(); ++index) {
+        const auto offset = cursorOffset(index);
+        selections_.addSelection(offset, offset);
+    }
+}
+
+void EditorView::ensureSelectionAlignment() {
+    while (selections_.selectionCount() > cursors_.cursorCount())
+        (void)selections_.removeSelection(selections_.selectionCount() - 1);
+    while (selections_.selectionCount() < cursors_.cursorCount()) {
+        const auto index = selections_.selectionCount();
+        const auto offset = cursorOffset(index);
+        selections_.addSelection(offset, offset);
+    }
+}
+
+void EditorView::normalizeCursorSelections() {
+    ensureSelectionAlignment();
+    std::size_t secondary = 0;
+    while (secondary < cursors_.secondaryCursorCount()) {
+        const auto selectionIndex = secondary + 1;
+        const auto currentOffset = cursorOffset(selectionIndex);
+        const auto currentRange = selections_.normalizedRange(selectionIndex);
+        bool conflict = false;
+        for (std::size_t prior = 0; prior < selectionIndex; ++prior) {
+            if (cursorOffset(prior) == currentOffset) {
+                conflict = true;
+                break;
+            }
+            const auto priorRange = selections_.normalizedRange(prior);
+            const bool currentEmpty = currentRange.begin == currentRange.end;
+            const bool priorEmpty = priorRange.begin == priorRange.end;
+            if ((!currentEmpty && !priorEmpty &&
+                 currentRange.begin < priorRange.end &&
+                 priorRange.begin < currentRange.end) ||
+                (currentEmpty && !priorEmpty &&
+                 currentRange.begin >= priorRange.begin &&
+                 currentRange.begin <= priorRange.end) ||
+                (!currentEmpty && priorEmpty &&
+                 priorRange.begin >= currentRange.begin &&
+                 priorRange.begin <= currentRange.end)) {
+                conflict = true;
+                break;
+            }
+        }
+        if (!conflict) {
+            ++secondary;
+            continue;
+        }
+        (void)cursors_.removeSecondaryCursor(secondary);
+        (void)selections_.removeSelection(selectionIndex);
+    }
+}
+
+void EditorView::setCursorOffset(std::size_t index, std::size_t offset) {
+    if (index == 0) cursors_.setPrimaryCursor(offset);
+    else cursors_.setSecondaryCursor(index - 1, offset);
+}
+
+std::size_t EditorView::cursorOffset(std::size_t index) const {
+    return index == 0 ? cursors_.primaryOffset()
+                      : cursors_.secondaryCursorOffset(index - 1);
 }
 
 bool EditorView::hasAnySelection() const {
@@ -215,9 +306,183 @@ bool EditorView::hasAnySelection() const {
 }
 
 void EditorView::afterEdit() {
+    ensureSelectionAlignment();
+    normalizeCursorSelections();
     renderer_->refreshFromModel();
     renderer_->ensureCursorVisible(cursors_.primaryOffset());
+    updateMatchingBrackets(true);
     if (documentChangedCallback_) documentChangedCallback_();
+}
+
+void EditorView::updateMatchingBrackets(bool force) {
+    const auto offset = cursors_.primaryOffset();
+    const auto revision = buffer_.revision();
+    if (!force && offset == lastMatchCursor_ && revision == lastMatchRevision_)
+        return;
+    lastMatchCursor_ = offset;
+    lastMatchRevision_ = revision;
+    renderer_->setMatchingBrackets(brackets_.matchingAtCursor(offset));
+}
+
+bool EditorView::handleTextCharacter(char character) {
+    ensureSelectionAlignment();
+    const auto closing = brackets_.closingFor(character);
+    const auto isClosing = character == ')' || character == ']' ||
+                           character == '}' || character == '"' ||
+                           character == '\'';
+    if (!closing && !isClosing) return false;
+
+    std::vector<bool> selected(cursors_.cursorCount());
+    bool hasSelection = false;
+    bool needsBracketBehavior = false;
+    for (std::size_t index = 0; index < cursors_.cursorCount(); ++index) {
+        selected[index] = selections_.hasSelection(index);
+        hasSelection = hasSelection || selected[index];
+        if (selected[index]) continue;
+        const auto offset = cursorOffset(index);
+        const bool skipExisting =
+            isClosing && offset < buffer_.sizeBytes() &&
+            buffer_.byteAt(offset) == static_cast<unsigned char>(character);
+        const bool pairOpening =
+            closing && brackets_.shouldPairAt(offset, character);
+        needsBracketBehavior = needsBracketBehavior || skipExisting || pairOpening;
+    }
+    if (!needsBracketBehavior) return false;
+
+    history_.beginTransaction();
+    if (hasSelection) (void)history_.deleteSelections();
+
+    std::vector<std::size_t> skipped;
+    std::vector<std::size_t> paired;
+    std::vector<std::size_t> withExistingCloser;
+    std::vector<std::size_t> insertedAt;
+    skipped.reserve(cursors_.cursorCount());
+    paired.reserve(cursors_.cursorCount());
+    withExistingCloser.reserve(cursors_.cursorCount());
+    insertedAt.reserve(cursors_.cursorCount());
+
+    for (std::size_t index = 0; index < cursors_.cursorCount(); ++index) {
+        if (selected[index]) {
+            insertedAt.push_back(index);
+            continue;
+        }
+        const auto offset = cursorOffset(index);
+        const bool skipExisting =
+            isClosing && offset < buffer_.sizeBytes() &&
+            buffer_.byteAt(offset) == static_cast<unsigned char>(character);
+        if (skipExisting) {
+            skipped.push_back(index);
+            continue;
+        }
+        insertedAt.push_back(index);
+        if (!closing || !brackets_.shouldPairAt(offset, character)) continue;
+        paired.push_back(index);
+        if (offset < buffer_.sizeBytes() &&
+            buffer_.byteAt(offset) == static_cast<unsigned char>(*closing))
+            withExistingCloser.push_back(index);
+    }
+
+    const auto text = std::string(1, character);
+    if (paired.empty() && skipped.size() == cursors_.cursorCount()) {
+        for (const auto index : skipped)
+            setCursorOffset(index, cursorOffset(index) + 1);
+        collapseSelectionsAtCursors();
+        history_.endTransaction();
+        return true;
+    }
+
+    if (!insertedAt.empty()) {
+        (void)history_.insertTextAtCursorIndices(insertedAt, text);
+        if (paired.empty()) {
+            for (const auto index : skipped)
+                setCursorOffset(index, cursorOffset(index) + 1);
+        } else {
+            std::vector<std::size_t> closingIndexes;
+            closingIndexes.reserve(paired.size());
+            for (const auto index : paired) {
+                if (std::find(withExistingCloser.begin(),
+                              withExistingCloser.end(), index) ==
+                    withExistingCloser.end())
+                    closingIndexes.push_back(index);
+            }
+            if (!closingIndexes.empty()) {
+                const std::string closingText(1, *closing);
+                (void)history_.insertTextAtCursorIndices(closingIndexes,
+                                                         closingText);
+                for (const auto index : closingIndexes)
+                    setCursorOffset(index, cursorOffset(index) - 1);
+            }
+            for (const auto index : skipped)
+                setCursorOffset(index, cursorOffset(index) + 1);
+        }
+    } else {
+        for (const auto index : skipped)
+            setCursorOffset(index, cursorOffset(index) + 1);
+    }
+    collapseSelectionsAtCursors();
+    history_.endTransaction();
+    return true;
+}
+
+void EditorView::backspaceWithPairHandling() {
+    normalizeCursorSelections();
+    std::vector<std::optional<editor::BracketPair>> pairs;
+    for (;;) {
+        pairs.assign(cursors_.cursorCount(), std::nullopt);
+        std::vector<std::optional<std::pair<std::size_t, std::size_t>>> ranges(
+            cursors_.cursorCount());
+        for (std::size_t index = 0; index < cursors_.cursorCount(); ++index) {
+            if (selections_.hasSelection(index)) {
+                const auto range = selections_.normalizedRange(index);
+                ranges[index] = std::pair{range.begin, range.end};
+                continue;
+            }
+            const auto offset = cursorOffset(index);
+            pairs[index] = brackets_.emptyPairAtCursor(offset);
+            if (pairs[index]) {
+                ranges[index] = std::pair{pairs[index]->opening,
+                                          pairs[index]->closing + 1};
+            } else if (offset > 0) {
+                ranges[index] = std::pair{previousScalar(offset), offset};
+            }
+        }
+
+        bool removedConflict = false;
+        for (std::size_t index = 1; index < ranges.size(); ++index) {
+            if (!ranges[index]) continue;
+            for (std::size_t prior = 0; prior < index; ++prior) {
+                if (!ranges[prior] ||
+                    ranges[index]->first >= ranges[prior]->second ||
+                    ranges[prior]->first >= ranges[index]->second)
+                    continue;
+                (void)cursors_.removeSecondaryCursor(index - 1);
+                (void)selections_.removeSelection(index);
+                removedConflict = true;
+                break;
+            }
+            if (removedConflict) break;
+        }
+        if (!removedConflict) break;
+    }
+
+    bool hasEmptyPair = false;
+    for (std::size_t index = 0; index < cursors_.cursorCount(); ++index) {
+        if (selections_.hasSelection(index)) pairs[index].reset();
+        hasEmptyPair = hasEmptyPair || pairs[index].has_value();
+    }
+    if (!hasEmptyPair) {
+        (void)history_.backspace();
+        return;
+    }
+    history_.beginTransaction();
+    ensureSelectionAlignment();
+    for (std::size_t index = 0; index < pairs.size(); ++index) {
+        if (!pairs[index]) continue;
+        selections_.setSelection(index, pairs[index]->opening,
+                                 pairs[index]->closing + 1);
+    }
+    (void)history_.backspace();
+    history_.endTransaction();
 }
 
 void EditorView::insertNewlineWithIndent() {
@@ -247,9 +512,16 @@ void EditorView::insertNewlineWithIndent() {
 }
 
 void EditorView::copySelection(bool cut) {
-    if (selections_.selectionCount() == 0 || !selections_.hasSelection(0)) return;
-    const auto range = selections_.normalizedRange(0);
-    const auto bytes = buffer_.textRange(range.begin, range.end - range.begin);
+    if (!hasAnySelection()) return;
+    std::string bytes;
+    bool first = true;
+    for (std::size_t index = 0; index < selections_.selectionCount(); ++index) {
+        if (!selections_.hasSelection(index)) continue;
+        if (!first) bytes.push_back('\n');
+        const auto range = selections_.normalizedRange(index);
+        bytes.append(buffer_.textRange(range.begin, range.end - range.begin));
+        first = false;
+    }
     QApplication::clipboard()->setText(
         QString::fromUtf8(bytes.data(), static_cast<qsizetype>(bytes.size())));
     if (cut) {
@@ -284,6 +556,11 @@ void EditorView::selectWord(std::size_t offset) {
     if (offset > 0 && offset == buffer_.sizeBytes()) offset = previousScalar(offset);
     if (offset == buffer_.sizeBytes()) {
         setPrimarySelection(offset, offset);
+        cursors_.setPrimaryCursor(offset);
+        dragAnchor_ = offset;
+        normalizeCursorSelections();
+        renderer_->viewport()->update();
+        updateMatchingBrackets();
         return;
     }
     const auto isWord = [this](std::size_t position) {
@@ -292,7 +569,13 @@ void EditorView::selectWord(std::size_t offset) {
     };
     if (!isWord(offset) && offset > 0) offset = previousScalar(offset);
     if (!isWord(offset)) {
-        setPrimarySelection(offset, nextScalar(offset));
+        const auto end = nextScalar(offset);
+        setPrimarySelection(offset, end);
+        cursors_.setPrimaryCursor(end);
+        dragAnchor_ = offset;
+        normalizeCursorSelections();
+        renderer_->viewport()->update();
+        updateMatchingBrackets();
         return;
     }
     auto begin = offset;
@@ -306,24 +589,54 @@ void EditorView::selectWord(std::size_t offset) {
     setPrimarySelection(begin, end);
     cursors_.setPrimaryCursor(end);
     dragAnchor_ = begin;
+    normalizeCursorSelections();
     renderer_->viewport()->update();
+    updateMatchingBrackets();
 }
 
 bool EditorView::handleMousePress(QMouseEvent* event) {
     if (event->button() != Qt::LeftButton) return false;
     renderer_->setFocus(Qt::MouseFocusReason);
     const auto offset = renderer_->offsetAtPosition(event->position());
+    if (event->modifiers().testFlag(Qt::AltModifier)) {
+        dragging_ = false;
+        extendingSelection_ = false;
+        for (std::size_t index = 0; index < cursors_.secondaryCursorCount();
+             ++index) {
+            if (cursors_.secondaryCursorOffset(index) != offset) continue;
+            (void)cursors_.removeSecondaryCursor(index);
+            (void)selections_.removeSelection(index + 1);
+            renderer_->viewport()->update();
+            updateMatchingBrackets(true);
+            return true;
+        }
+        for (std::size_t index = 0; index < selections_.selectionCount(); ++index) {
+            if (!selections_.hasSelection(index)) continue;
+            const auto range = selections_.normalizedRange(index);
+            if (offset >= range.begin && offset <= range.end) return true;
+        }
+        if (cursors_.addSecondaryCursor(offset)) {
+            selections_.addSelection(offset, offset);
+            normalizeCursorSelections();
+            renderer_->viewport()->update();
+        }
+        updateMatchingBrackets(true);
+        return true;
+    }
     extendingSelection_ = event->modifiers().testFlag(Qt::ShiftModifier);
     dragAnchor_ = extendingSelection_ && selections_.selectionCount() > 0 &&
                           selections_.hasSelection(0)
                       ? selections_.selection(0).anchor
                       : extendingSelection_ ? cursors_.primaryOffset() : offset;
+    if (!extendingSelection_) cursors_.clearSecondaryCursors();
     cursors_.setPrimaryCursor(offset);
     if (extendingSelection_) setPrimarySelection(dragAnchor_, offset);
     else collapseSelectionsAt(offset);
+    normalizeCursorSelections();
     dragging_ = true;
     renderer_->viewport()->setCursor(Qt::IBeamCursor);
     renderer_->viewport()->update();
+    updateMatchingBrackets();
     return true;
 }
 
@@ -332,7 +645,9 @@ bool EditorView::handleMouseMove(QMouseEvent* event) {
     const auto offset = renderer_->offsetAtPosition(event->position());
     cursors_.setPrimaryCursor(offset);
     setPrimarySelection(dragAnchor_, offset);
+    normalizeCursorSelections();
     renderer_->viewport()->update();
+    updateMatchingBrackets();
     return true;
 }
 

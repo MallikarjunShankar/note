@@ -3,6 +3,7 @@
 #include "editor/selection_manager.hpp"
 #include "editor/text_buffer.hpp"
 
+#include <array>
 #include <iostream>
 #include <stdexcept>
 
@@ -86,6 +87,60 @@ void testMultipleCursorsAndDeterminism() {
     require(rejected, "duplicate edit offsets are rejected");
 }
 
+void testMixedSelectionAndCursorDeletion() {
+    TextBuffer backwardText("abcd");
+    CursorManager backwardCursors(backwardText);
+    SelectionManager backwardSelections(backwardText);
+    EditingEngine backwardEditing(backwardText, backwardCursors,
+                                  backwardSelections);
+    backwardCursors.setPrimaryCursor(2);
+    require(backwardCursors.addSecondaryCursor(4), "add backspace cursor");
+    backwardSelections.setSelection(0, 1, 2);
+    backwardSelections.addSelection(4, 4);
+    const auto backward = backwardEditing.backspace();
+    require(backward.size() == 2 && backwardText.text() == "ac" &&
+                backwardSelections.selectionCount() == 0,
+            "backspace deletes selections and adjacent text at empty cursors atomically");
+
+    TextBuffer forwardText("abcd");
+    CursorManager forwardCursors(forwardText);
+    SelectionManager forwardSelections(forwardText);
+    EditingEngine forwardEditing(forwardText, forwardCursors, forwardSelections);
+    forwardCursors.setPrimaryCursor(1);
+    require(forwardCursors.addSecondaryCursor(3), "add forward-delete cursor");
+    forwardSelections.setSelection(0, 1, 2);
+    forwardSelections.addSelection(3, 3);
+    const auto forward = forwardEditing.deleteForward();
+    require(forward.size() == 2 && forwardText.text() == "ac" &&
+                forwardSelections.selectionCount() == 0,
+            "forward delete combines selected and unselected cursor ranges");
+}
+
+void testInsertAtSelectedCursorIndices() {
+    TextBuffer text("a)b");
+    CursorManager cursors(text);
+    SelectionManager selections(text);
+    EditingEngine editing(text, cursors, selections);
+    cursors.setPrimaryCursor(1);
+    require(cursors.addSecondaryCursor(3), "add targeted insertion cursor");
+    const std::array<std::size_t, 1> targets{1};
+    const auto records = editing.insertTextAtCursorIndices(targets, ")");
+    require(records.size() == 1 && text.text() == "a)b)",
+            "targeted insertion leaves unselected cursor positions untouched");
+    require(cursors.primaryOffset() == 1 && cursors.secondaryCursorOffset(0) == 4,
+            "targeted insertion transforms all cursor positions");
+
+    bool rejected = false;
+    const std::array<std::size_t, 2> invalidTargets{0, 0};
+    try {
+        (void)editing.insertTextAtCursorIndices(invalidTargets, "x");
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    require(rejected && text.text() == "a)b)",
+            "duplicate targeted cursor indices fail before mutation");
+}
+
 void testOverlappingSelectionsAndLineEndings() {
     TextBuffer text("one\ntwo");
     CursorManager cursors(text);
@@ -120,6 +175,8 @@ int main() {
         testBasicEditing();
         testSelectionsAndUnicode();
         testMultipleCursorsAndDeterminism();
+        testMixedSelectionAndCursorDeletion();
+        testInsertAtSelectedCursorIndices();
         testOverlappingSelectionsAndLineEndings();
         std::cout << "All editing engine tests passed.\n";
         return 0;

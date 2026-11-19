@@ -73,6 +73,36 @@ void testCursorAndSelectionGeometry() {
     cursors.setPrimaryCursor(2);
     const auto tabbedCursor = renderer.cursorGeometry(0);
     require(tabbedCursor.x() > startCursor.x(), "tab and Unicode layout advances");
+
+    require(cursors.addSecondaryCursor(1), "secondary cursor is created");
+    const auto secondaryCursor = renderer.cursorGeometry(1);
+    require(secondaryCursor.width() > 0 && secondaryCursor.x() > startCursor.x(),
+            "renderer exposes geometry for secondary cursors");
+}
+
+void testMatchingBracketGeometry() {
+    TextBuffer text("()");
+    CursorManager cursors(text);
+    SelectionManager selections(text);
+    EditorRenderer renderer(text, cursors, selections);
+    renderer.resize(180, 60);
+    renderer.show();
+    QCoreApplication::processEvents();
+
+    renderer.setMatchingBrackets(note::editor::BracketPair{0, 1});
+    const auto geometry = renderer.matchingBracketGeometry();
+    require(geometry.size() == 2 && geometry[0].width() > 0 &&
+                geometry[1].width() > 0,
+            "both visible matching brackets receive highlight geometry");
+    QImage image(renderer.viewport()->size(), QImage::Format_ARGB32);
+    image.fill(Qt::transparent);
+    renderer.viewport()->render(&image);
+    const auto sampleX = qRound(geometry.front().left() +
+                                geometry.front().width() / 2);
+    const auto sampleY = qRound(geometry.front().top());
+    require(image.pixelColor(sampleX, sampleY) ==
+                renderer.configuration().matchingBracket,
+            "matching bracket feedback is painted with its configured color");
 }
 
 void testPaintingAndClipping() {
@@ -101,6 +131,7 @@ int main(int argc, char** argv) {
     try {
         testConfigurationAndViewport();
         testCursorAndSelectionGeometry();
+        testMatchingBracketGeometry();
         testPaintingAndClipping();
         std::cout << "All editor renderer tests passed.\n";
         return 0;

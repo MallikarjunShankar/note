@@ -68,6 +68,13 @@ qreal EditorRenderer::horizontalOffset() const noexcept {
     return horizontalOffset_;
 }
 
+void EditorRenderer::setMatchingBrackets(
+    std::optional<editor::BracketPair> pair) {
+    if (matchingBrackets_ == pair) return;
+    matchingBrackets_ = pair;
+    invalidateViewport();
+}
+
 std::size_t EditorRenderer::offsetAtPosition(const QPointF& position) const {
     const auto lineCount = buffer_.lineCount();
     const auto row = std::max<qreal>(0, position.y()) / effectiveLineHeight();
@@ -224,6 +231,27 @@ QVector<QRectF> EditorRenderer::selectionGeometry(std::size_t selectionIndex) co
     return result;
 }
 
+QVector<QRectF> EditorRenderer::matchingBracketGeometry() const {
+    QVector<QRectF> result;
+    if (!matchingBrackets_) return result;
+    const auto visible = calculateVisibleLineRange();
+    for (const auto offset : {matchingBrackets_->opening, matchingBrackets_->closing}) {
+        if (offset >= buffer_.sizeBytes()) continue;
+        const auto location = cursors_.lineAndColumn(offset);
+        if (location.line < visible.begin || location.line >= visible.end) continue;
+        const auto range = buffer_.lineRange(location.line);
+        if (offset < range.begin || offset >= range.end) continue;
+        const auto layout = layoutLine(location.line);
+        const auto origin = textOrigin(location.line);
+        const auto start = xForByte(layout, range.begin, offset);
+        const auto end = xForByte(layout, range.begin, offset + 1);
+        result.push_back({origin.x() + start, origin.y(),
+                          std::max<qreal>(1, end - start),
+                          static_cast<qreal>(effectiveLineHeight())});
+    }
+    return result;
+}
+
 void EditorRenderer::paintEvent(QPaintEvent*) {
     QPainter painter(viewport());
     painter.fillRect(viewport()->rect(), configuration_.background);
@@ -260,6 +288,19 @@ void EditorRenderer::paintEvent(QPaintEvent*) {
         const auto baseline = origin.y() + metrics.ascent() +
             std::max(0, (effectiveLineHeight() - metrics.height()) / 2);
         painter.drawText(QPointF(origin.x(), baseline), layout.display);
+        if (matchingBrackets_) {
+            painter.setBrush(Qt::NoBrush);
+            painter.setPen(QPen(configuration_.matchingBracket));
+            for (const auto offset : {matchingBrackets_->opening,
+                                      matchingBrackets_->closing}) {
+                if (offset < range.begin || offset >= range.end) continue;
+                const auto xStart = xForByte(layout, range.begin, offset);
+                const auto xEnd = xForByte(layout, range.begin, offset + 1);
+                painter.drawRect(QRectF(origin.x() + xStart, origin.y(),
+                                        std::max<qreal>(1, xEnd - xStart),
+                                        std::max<qreal>(1, effectiveLineHeight() - 1)));
+            }
+        }
         painter.restore();
         ++lastPaintedLines_;
         (void)range;

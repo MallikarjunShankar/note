@@ -39,6 +39,15 @@ EditBatch UndoRedoManager::insertText(std::string_view utf8Text,
     return finish(std::move(batch), kind, before);
 }
 
+EditBatch UndoRedoManager::insertTextAtCursorIndices(
+    std::span<const std::size_t> cursorIndices, std::string_view utf8Text,
+    LineEnding bareLineEnding) {
+    const auto before = captureState();
+    auto batch = editing_.insertTextAtCursorIndices(
+        cursorIndices, utf8Text, bareLineEnding);
+    return finish(std::move(batch), OperationKind::other, before);
+}
+
 EditBatch UndoRedoManager::backspace() {
     const auto before = captureState();
     auto batch = editing_.backspace();
@@ -78,7 +87,10 @@ void UndoRedoManager::beginTransaction() {
 
 void UndoRedoManager::endTransaction() {
     if (!openTransaction_) throw std::logic_error("no undo transaction is open");
-    if (!openTransaction_->batches.empty()) commit(std::move(*openTransaction_));
+    if (!openTransaction_->batches.empty()) {
+        openTransaction_->after = captureState();
+        commit(std::move(*openTransaction_));
+    }
     openTransaction_.reset();
 }
 

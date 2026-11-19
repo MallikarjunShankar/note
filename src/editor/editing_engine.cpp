@@ -26,10 +26,35 @@ EditBatch EditingEngine::insertText(std::string_view utf8Text,
     return apply(std::move(edits), bareLineEnding, false);
 }
 
+EditBatch EditingEngine::insertTextAtCursorIndices(
+    std::span<const std::size_t> cursorIndices, std::string_view utf8Text,
+    LineEnding bareLineEnding) {
+    validateInsertedText(utf8Text);
+    std::vector<bool> seen(cursors_.cursorCount());
+    std::vector<PendingEdit> edits;
+    edits.reserve(cursorIndices.size());
+    for (const auto index : cursorIndices) {
+        if (index >= cursors_.cursorCount() || seen[index])
+            throw std::invalid_argument("target cursor index is invalid or duplicated");
+        seen[index] = true;
+        const auto offset = index == 0 ? cursors_.primaryOffset()
+                                       : cursors_.secondaryCursorOffset(index - 1);
+        edits.push_back({offset, 0, std::string(utf8Text)});
+    }
+    return apply(std::move(edits), bareLineEnding, false);
+}
+
 EditBatch EditingEngine::backspace() {
     std::vector<PendingEdit> edits;
     edits.reserve(cursors_.cursorCount());
+    bool selectedRange = false;
     for (std::size_t index = 0; index < cursors_.cursorCount(); ++index) {
+        if (index < selections_.selectionCount() && selections_.hasSelection(index)) {
+            const auto range = selections_.normalizedRange(index);
+            edits.push_back({range.begin, range.end - range.begin, {}});
+            selectedRange = true;
+            continue;
+        }
         const auto cursor = index == 0 ? cursors_.primaryOffset()
                                        : cursors_.secondaryCursorOffset(index - 1);
         if (cursor != 0) {
@@ -37,13 +62,20 @@ EditBatch EditingEngine::backspace() {
             edits.push_back({begin, cursor - begin, {}});
         }
     }
-    return apply(std::move(edits), LineEnding::lf, false);
+    return apply(std::move(edits), LineEnding::lf, selectedRange);
 }
 
 EditBatch EditingEngine::deleteForward() {
     std::vector<PendingEdit> edits;
     edits.reserve(cursors_.cursorCount());
+    bool selectedRange = false;
     for (std::size_t index = 0; index < cursors_.cursorCount(); ++index) {
+        if (index < selections_.selectionCount() && selections_.hasSelection(index)) {
+            const auto range = selections_.normalizedRange(index);
+            edits.push_back({range.begin, range.end - range.begin, {}});
+            selectedRange = true;
+            continue;
+        }
         const auto cursor = index == 0 ? cursors_.primaryOffset()
                                        : cursors_.secondaryCursorOffset(index - 1);
         if (cursor != buffer_.sizeBytes()) {
@@ -51,7 +83,7 @@ EditBatch EditingEngine::deleteForward() {
             edits.push_back({cursor, end - cursor, {}});
         }
     }
-    return apply(std::move(edits), LineEnding::lf, false);
+    return apply(std::move(edits), LineEnding::lf, selectedRange);
 }
 
 EditBatch EditingEngine::insertNewline(LineEnding lineEnding) {

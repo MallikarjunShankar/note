@@ -22,6 +22,7 @@
 
 #include <iostream>
 #include <stdexcept>
+#include <utility>
 
 namespace {
 
@@ -33,6 +34,16 @@ void sendKey(note::ui::EditorView& view, int key, Qt::KeyboardModifiers modifier
              const QString& text = {}) {
     QKeyEvent event(QEvent::KeyPress, key, modifiers, text);
     QApplication::sendEvent(view.renderer(), &event);
+}
+
+void sendMouseClick(QWidget& widget, const QPointF& position,
+                    Qt::KeyboardModifiers modifiers = {}) {
+    QMouseEvent press(QEvent::MouseButtonPress, position, position, position,
+                      Qt::LeftButton, Qt::LeftButton, modifiers);
+    QApplication::sendEvent(&widget, &press);
+    QMouseEvent release(QEvent::MouseButtonRelease, position, position, position,
+                        Qt::LeftButton, Qt::NoButton, modifiers);
+    QApplication::sendEvent(&widget, &release);
 }
 
 note::ui::EditorView* activeEditorView(note::ui::MainWindow& window) {
@@ -84,7 +95,23 @@ int main(int argc, char* argv[]) {
         require(active->buffer().text() == "Aλ", "undo restores typed text");
         sendKey(*editor, Qt::Key_Y, Qt::ControlModifier);
         require(active->buffer().text() == "λ", "redo reapplies typed text");
+        editor->cursors().setPrimaryCursor(0);
+        editor->selections().setSelection(0, 0, 0);
+        const auto lambdaWidth =
+            QFontMetricsF(editor->renderer()->configuration().font)
+                .horizontalAdvance(QString::fromUtf8("λ"));
+        const QPointF lambdaEnd(lambdaWidth, 10);
+        sendMouseClick(*editor->renderer()->viewport(), lambdaEnd, Qt::AltModifier);
+        require(editor->cursors().cursorCount() == 2 &&
+                    active->buffer().isScalarBoundary(
+                        editor->cursors().secondaryCursorOffset(0)),
+                "Alt+Click keeps Unicode cursor positions on scalar boundaries");
+        sendMouseClick(*editor->renderer()->viewport(), lambdaEnd, Qt::AltModifier);
+        require(editor->cursors().cursorCount() == 1,
+                "Alt+Click toggles the Unicode secondary cursor off");
         editor->cursors().setPrimaryCursor(active->buffer().sizeBytes());
+        editor->selections().setSelection(0, active->buffer().sizeBytes(),
+                                          active->buffer().sizeBytes());
         sendKey(*editor, Qt::Key_Left, Qt::ShiftModifier);
         require(editor->selections().hasSelection(0),
                 "Shift+Arrow extends a keyboard selection");
@@ -227,6 +254,195 @@ int main(int argc, char* argv[]) {
         auto* openedEditor = activeEditorView(window);
         require(openedEditor != nullptr, "opened document gets an editor view");
         const auto font = openedEditor->renderer()->configuration().font;
+        const std::pair<QString, QString> bracketPairs[] = {
+            {QStringLiteral("("), QStringLiteral(")")},
+            {QStringLiteral("["), QStringLiteral("]")},
+            {QStringLiteral("{"), QStringLiteral("}")},
+            {QStringLiteral("\""), QStringLiteral("\"")},
+            {QStringLiteral("'"), QStringLiteral("'")}
+        };
+        for (const auto& pair : bracketPairs) {
+            openedEditor->cursors().setPrimaryCursor(0);
+            openedEditor->selections().clearSelections();
+            openedEditor->selections().addSelection(0, 0);
+            sendKey(*openedEditor, Qt::Key_unknown, Qt::NoModifier, pair.first);
+            const auto expected = (pair.first + pair.second + QStringLiteral("ready"))
+                                      .toUtf8().toStdString();
+            require(workflow.activeDocument()->buffer().text() == expected &&
+                        openedEditor->cursors().primaryOffset() == 1,
+                    "each configured bracket type auto-pairs and places the cursor inside");
+            if (pair.first == QStringLiteral("(")) {
+                const auto geometry =
+                    openedEditor->renderer()->matchingBracketGeometry();
+                require(geometry.size() == 2,
+                        "matching brackets are highlighted around the cursor");
+                sendKey(*openedEditor, Qt::Key_unknown, Qt::NoModifier,
+                        pair.second);
+                require(openedEditor->cursors().primaryOffset() == 2 &&
+                            workflow.activeDocument()->buffer().text() == expected,
+                        "typing an existing closer skips it without inserting a duplicate");
+                openedEditor->cursors().setPrimaryCursor(1);
+                openedEditor->selections().setSelection(0, 1, 1);
+                sendKey(*openedEditor, Qt::Key_Backspace);
+                require(workflow.activeDocument()->buffer().text() == "ready",
+                        "backspace deletes an empty pair together");
+                sendKey(*openedEditor, Qt::Key_Z, Qt::ControlModifier);
+                require(workflow.activeDocument()->buffer().text() == expected &&
+                            openedEditor->cursors().primaryOffset() == 1,
+                        "undo restores an automatically paired edit and cursor");
+                sendKey(*openedEditor, Qt::Key_Y, Qt::ControlModifier);
+                require(workflow.activeDocument()->buffer().text() == "ready",
+                        "redo reapplies empty-pair deletion");
+            } else {
+                sendKey(*openedEditor, Qt::Key_Z, Qt::ControlModifier);
+                require(workflow.activeDocument()->buffer().text() == "ready",
+                        "paired quote and bracket insertions undo atomically");
+            }
+        }
+        openedEditor->cursors().setPrimaryCursor(5);
+        openedEditor->selections().clearSelections();
+        openedEditor->selections().addSelection(5, 5);
+        sendKey(*openedEditor, Qt::Key_unknown, Qt::NoModifier, QStringLiteral("'"));
+        require(workflow.activeDocument()->buffer().text() == "ready'",
+                "apostrophe following a word is not auto-paired");
+        sendKey(*openedEditor, Qt::Key_Z, Qt::ControlModifier);
+        require(workflow.activeDocument()->buffer().text() == "ready",
+                "apostrophe insertion remains undoable");
+
+        openedEditor->cursors().setPrimaryCursor(0);
+        openedEditor->selections().clearSelections();
+        openedEditor->selections().addSelection(0, 0);
+        const auto secondCursorX =
+            QFontMetricsF(font).horizontalAdvance(QStringLiteral("re"));
+        const QPointF secondCursorPosition(secondCursorX, 10);
+        sendMouseClick(*openedEditor->renderer()->viewport(),
+                       secondCursorPosition, Qt::AltModifier);
+        require(openedEditor->cursors().cursorCount() == 2 &&
+                    openedEditor->selections().selectionCount() == 2 &&
+                    openedEditor->renderer()->cursorGeometry(1).width() > 0,
+                "Alt+Click creates and renders an independent secondary cursor");
+        sendKey(*openedEditor, Qt::Key_unknown, Qt::NoModifier,
+                QStringLiteral("("));
+        require(workflow.activeDocument()->buffer().text() == "()re()ady" &&
+                    openedEditor->cursors().primaryOffset() == 1 &&
+                    openedEditor->cursors().secondaryCursorOffset(0) == 5,
+                "bracket pairing applies at all active cursors");
+        sendKey(*openedEditor, Qt::Key_Z, Qt::ControlModifier);
+        require(workflow.activeDocument()->buffer().text() == "ready" &&
+                    openedEditor->cursors().primaryOffset() == 0 &&
+                    openedEditor->cursors().secondaryCursorOffset(0) == 2,
+                "multi-cursor pair insertion undoes as one transaction");
+        openedEditor->cursors().setPrimaryCursor(1);
+        openedEditor->cursors().setSecondaryCursor(0, 2);
+        openedEditor->selections().setSelection(0, 0, 1);
+        openedEditor->selections().setSelection(1, 2, 2);
+        sendKey(*openedEditor, Qt::Key_unknown, Qt::NoModifier,
+                QStringLiteral("("));
+        require(workflow.activeDocument()->buffer().text() == "(e()ady",
+                "selected text replacement and unselected cursor pairing coexist");
+        sendKey(*openedEditor, Qt::Key_unknown, Qt::NoModifier,
+                QStringLiteral(")"));
+        require(workflow.activeDocument()->buffer().text() == "()e()ady",
+                "a closer is skipped at an unselected cursor during mixed selection edits");
+        sendKey(*openedEditor, Qt::Key_Z, Qt::ControlModifier);
+        require(workflow.activeDocument()->buffer().text() == "(e()ady" &&
+                    openedEditor->cursors().primaryOffset() == 1 &&
+                    openedEditor->cursors().secondaryCursorOffset(0) == 3,
+                "mixed-cursor closer skip undoes without changing the paired document");
+        sendKey(*openedEditor, Qt::Key_Z, Qt::ControlModifier);
+        require(workflow.activeDocument()->buffer().text() == "ready" &&
+                    openedEditor->selections().hasSelection(0),
+                "mixed selection replacement and pairing undo atomically");
+        openedEditor->cursors().setPrimaryCursor(0);
+        openedEditor->cursors().setSecondaryCursor(0, 2);
+        openedEditor->selections().clearSelections();
+        openedEditor->selections().addSelection(0, 0);
+        openedEditor->selections().addSelection(2, 2);
+        sendKey(*openedEditor, Qt::Key_Right, Qt::ShiftModifier);
+        require(openedEditor->selections().hasSelection(0) &&
+                    openedEditor->selections().hasSelection(1),
+                "keyboard extension creates independent multi-cursor selections");
+        sendKey(*openedEditor, Qt::Key_C, Qt::ControlModifier);
+        require(QApplication::clipboard()->text() == QStringLiteral("r\na"),
+                "copy combines selected text from each cursor");
+        sendKey(*openedEditor, Qt::Key_X, Qt::ControlModifier);
+        require(workflow.activeDocument()->buffer().text() == "edy",
+                "cut removes all multi-cursor selections");
+        sendKey(*openedEditor, Qt::Key_Z, Qt::ControlModifier);
+        require(workflow.activeDocument()->buffer().text() == "ready" &&
+                    openedEditor->selections().selectionCount() == 2,
+                "undo restores multiple selections atomically");
+        sendKey(*openedEditor, Qt::Key_Y, Qt::ControlModifier);
+        require(workflow.activeDocument()->buffer().text() == "edy",
+                "redo reapplies multi-selection cut");
+        sendKey(*openedEditor, Qt::Key_Z, Qt::ControlModifier);
+        openedEditor->cursors().setPrimaryCursor(0);
+        openedEditor->cursors().setSecondaryCursor(0, 2);
+        openedEditor->selections().setSelection(0, 0, 0);
+        openedEditor->selections().setSelection(1, 2, 2);
+        sendKey(*openedEditor, Qt::Key_unknown, Qt::NoModifier, QStringLiteral("!"));
+        require(workflow.activeDocument()->buffer().text() == "!re!ady",
+                "insertion applies at every active cursor");
+        sendKey(*openedEditor, Qt::Key_Z, Qt::ControlModifier);
+        require(workflow.activeDocument()->buffer().text() == "ready" &&
+                    openedEditor->cursors().primaryOffset() == 0 &&
+                    openedEditor->cursors().secondaryCursorOffset(0) == 2,
+                "undo restores multi-cursor positions after simultaneous insertion");
+        sendKey(*openedEditor, Qt::Key_Right, Qt::ShiftModifier);
+        sendKey(*openedEditor, Qt::Key_Right, Qt::ShiftModifier);
+        sendKey(*openedEditor, Qt::Key_Right, Qt::ShiftModifier);
+        require(openedEditor->cursors().cursorCount() == 1 &&
+                    openedEditor->selections().selectionCount() == 1,
+                "overlapping extended ranges deterministically retain the primary cursor");
+        openedEditor->cursors().setPrimaryCursor(0);
+        openedEditor->selections().setSelection(0, 0, 0);
+        sendMouseClick(*openedEditor->renderer()->viewport(),
+                       secondCursorPosition, Qt::AltModifier);
+        require(openedEditor->cursors().cursorCount() == 2,
+                "non-overlapping secondary cursor can be added after range normalization");
+        openedEditor->cursors().setPrimaryCursor(1);
+        openedEditor->cursors().setSecondaryCursor(0, 3);
+        openedEditor->selections().setSelection(0, 1, 1);
+        openedEditor->selections().setSelection(1, 3, 3);
+        sendKey(*openedEditor, Qt::Key_Backspace);
+        require(workflow.activeDocument()->buffer().text() == "edy",
+                "backspace deletes at multiple cursors simultaneously");
+        sendKey(*openedEditor, Qt::Key_Z, Qt::ControlModifier);
+        require(workflow.activeDocument()->buffer().text() == "ready",
+                "multi-cursor backspace undo restores document contents");
+        openedEditor->cursors().setPrimaryCursor(0);
+        openedEditor->cursors().setSecondaryCursor(0, 2);
+        openedEditor->selections().clearSelections();
+        openedEditor->selections().addSelection(0, 0);
+        openedEditor->selections().addSelection(2, 2);
+        sendKey(*openedEditor, Qt::Key_unknown, Qt::NoModifier,
+                QStringLiteral("("));
+        openedEditor->cursors().setPrimaryCursor(1);
+        openedEditor->cursors().setSecondaryCursor(0, 2);
+        openedEditor->selections().clearSelections();
+        openedEditor->selections().addSelection(1, 1);
+        openedEditor->selections().addSelection(2, 2);
+        sendKey(*openedEditor, Qt::Key_Backspace);
+        require(workflow.activeDocument()->buffer().text() == "re()ady" &&
+                    openedEditor->cursors().cursorCount() == 1,
+                "overlapping paired and ordinary backspaces retain the primary edit");
+        sendKey(*openedEditor, Qt::Key_Z, Qt::ControlModifier);
+        require(workflow.activeDocument()->buffer().text() == "()re()ady",
+                "paired deletion remains undoable after conflict resolution");
+        sendKey(*openedEditor, Qt::Key_Z, Qt::ControlModifier);
+        require(workflow.activeDocument()->buffer().text() == "ready",
+                "conflict-resolved pair insertion remains in history");
+        openedEditor->cursors().setPrimaryCursor(0);
+        openedEditor->cursors().clearSecondaryCursors();
+        openedEditor->cursors().addSecondaryCursor(2);
+        openedEditor->selections().setSelection(0, 0, 0);
+        openedEditor->selections().setSelection(1, 2, 2);
+        sendMouseClick(*openedEditor->renderer()->viewport(),
+                       secondCursorPosition, Qt::AltModifier);
+        require(openedEditor->cursors().cursorCount() == 1 &&
+                    openedEditor->selections().selectionCount() == 1,
+                "Alt+Click removes the secondary cursor and matching selection");
+
         const auto clickX = QFontMetricsF(font).horizontalAdvance(QStringLiteral("r"));
         const QPointF doubleClickPosition(clickX, 10);
         QMouseEvent doubleClick(QEvent::MouseButtonDblClick, doubleClickPosition,

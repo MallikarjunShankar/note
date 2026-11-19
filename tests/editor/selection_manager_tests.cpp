@@ -31,6 +31,10 @@ void testDirectionsAndClearing() {
     require(selections.selectionCount() == 3 && selections.hasSelection(1) &&
                 !selections.hasSelection(2),
             "multiple independent selections are retained");
+    require(selections.removeSelection(1) && selections.selectionCount() == 2 &&
+                selections.selection(1).anchor == 4,
+            "removing one selection preserves the others");
+    require(!selections.removeSelection(8), "invalid selection removal is safe");
     selections.clearSelections();
     require(selections.selectionCount() == 0, "all selections can be cleared");
 }

@@ -4,7 +4,7 @@
 
 ## Current state
 
-The CMake C++20/Qt 6 Widgets application implements the Phase 02 document workflows, including background open/reload, progress and cancellation, external-change notifications, fingerprint-based save conflict protection, drag/drop, and platform launch helpers. Phase 02 remains partial pending focused verification, cross-platform validation, and performance benchmarking. The Main Window now uses per-document project-owned editing views; recovery and remaining V1 editor features are outstanding. Current performance numbers are host-specific evidence, not production guarantees or proof of the low-end budget.
+The CMake C++20/Qt 6 Widgets application implements Phase 02 document workflows and per-document project-owned editing views. Core editor input includes multi-cursor editing and configurable bracket/quote completion with nested matching; Phase 02 remains partial pending focused verification, cross-platform validation, and performance benchmarking. Recovery and remaining V1 editor features are outstanding. Current performance numbers are host-specific evidence, not production guarantees or proof of the low-end budget.
 
 ## Documents
 

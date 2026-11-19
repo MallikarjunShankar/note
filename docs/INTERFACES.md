@@ -22,7 +22,7 @@ These are the small Phase 02 interfaces available under `src/`. Qt is confined t
 ## Selection Manager (`editor::SelectionManager`)
 
 - `SelectionManager` accepts a `TextBuffer` reference and owns only selection state. Each selection stores an anchor and active endpoint as UTF-8 byte offsets.
-- `setSelection`, `addSelection`, `setAnchor`, and `setActive` clamp endpoints to document bounds and Unicode scalar boundaries. `normalizedRange` returns document-order `[begin, end)` coordinates; `hasSelection` distinguishes empty selections.
+- `setSelection`, `addSelection`, `removeSelection`, `setAnchor`, and `setActive` clamp endpoints to document bounds and Unicode scalar boundaries. `normalizedRange` returns document-order `[begin, end)` coordinates; `hasSelection` distinguishes empty selections.
 - `clearSelection` collapses one selection to its active endpoint; `clearSelections` removes all selections. `syncToBuffer` clamps state after external buffer changes.
 - `onTextReplaced(offset, removedBytes, insertedBytes)` applies an explicit endpoint transformation after a completed `TextBuffer` replacement. Insertions at an endpoint shift it forward; endpoints inside a removed range map to the replacement end; invalid edit coordinates throw rather than being guessed.
 - Selection state is independent of `CursorManager`; an editing or input controller supplies cursor endpoints when extending or moving selections.
@@ -30,7 +30,8 @@ These are the small Phase 02 interfaces available under `src/`. Qt is confined t
 ## Editing Engine (`editor::EditingEngine`)
 
 - `EditingEngine` accepts a mutable `TextBuffer` and references to the existing `CursorManager` and `SelectionManager`; it owns no text, cursor, or selection state.
-- `insertText`, `backspace`, `deleteForward`, and `insertNewline` operate on all cursor positions. `replaceSelections` and `deleteSelections` operate on all non-empty selection ranges, clear selections after success, and move corresponding cursors to the replacement end.
+- `insertText`, `backspace`, `deleteForward`, and `insertNewline` operate on all cursor positions. Backspace and forward delete remove a corresponding non-empty selection and otherwise delete adjacent text, allowing mixed multi-cursor selections and empty cursors in one validated batch. `replaceSelections` replaces every managed selection (including empty selections used as insertion cursors); `deleteSelections` removes only non-empty ranges.
+- `insertTextAtCursorIndices` supports a validated subset of active cursors for operations such as skipping existing closing characters. All resulting offset transforms still go through the engine and buffer managers.
 - Operations use UTF-8 scalar boundaries and preserve `TextBuffer` line-ending metadata. Multiple edits are validated before mutation, reject duplicate/overlapping ranges, and apply in descending document order so offsets remain stable. Ambiguous edits throw `std::invalid_argument` rather than being discarded.
 - Editing methods return `EditBatch` records containing each offset and removed/inserted text. These records are the integration boundary for the future Undo/Redo Manager; no undo history is owned here.
 - `CursorManager::setSecondaryCursor` updates an existing secondary cursor without transferring cursor ownership to the editing engine.
@@ -39,7 +40,7 @@ These are the small Phase 02 interfaces available under `src/`. Qt is confined t
 
 - `UndoRedoManager` accepts the existing `TextBuffer`, `CursorManager`, `SelectionManager`, and `EditingEngine`; it owns only reversible transaction history.
 - The editing methods mirror `EditingEngine` and record insertion, deletion, newline, and selection replacement as atomic transactions. `undo` and `redo` replay edit batches without creating new history entries, then restore the captured cursor and selection states.
-- `beginTransaction`/`endTransaction` provide explicit grouping boundaries. Single-scalar typing and consecutive backspaces may group only when the editor state is unchanged between operations; cursor or selection movement and incompatible operations prevent grouping.
+- `beginTransaction`/`endTransaction` provide explicit grouping boundaries; the final cursor/selection state is captured at `endTransaction`. Single-scalar typing and consecutive backspaces may group only when the editor state is unchanged between operations; cursor or selection movement and incompatible operations prevent grouping.
 - History memory is accounted as edit-record metadata, UTF-8 payloads, line-ending metadata, and captured cursor/selection state. `setMemoryLimit` evicts oldest complete transactions; an individual transaction larger than the limit is safely omitted.
 - Edit records retain `TextSnapshot` payloads so undo/redo restores exact UTF-8 text and LF/CRLF/CR metadata. No full-document snapshots are used.
 
@@ -50,15 +51,23 @@ These are the small Phase 02 interfaces available under `src/`. Qt is confined t
 - `visibleLineRange`, `scrollToLine`, and `setHorizontalOffset` expose viewport positioning. Painting requests only visible line ranges plus one small guard row; it does not materialize the document.
 - `cursorGeometry` and `selectionGeometry` expose scalar-safe caret and single/multiline selection geometry. `offsetAtPosition` maps viewport coordinates to UTF-8 scalar boundaries; `ensureCursorVisible` scrolls a caret into view, and `refreshFromModel` updates viewport and scrollbar state after external edits.
 - Tabs use configurable tab stops and Unicode text is measured through Qt font metrics. Painting limits line processing to the viewport plus a small guard row.
+- `setMatchingBrackets` supplies cached matching offsets; matching outlines are painted only on their visible lines. The renderer never performs bracket searches itself.
 - The renderer is tested offscreen; this does not establish real-display latency or performance targets.
+
+## Bracket Manager (`editor::BracketManager`)
+
+- The framework-independent manager supports individually configurable `()`, `[]`, `{}`, `""`, and `''` pairs. `shouldPairAt` enforces scalar-safe offsets and the specified no-quote-pairing-after-a-word-character rule.
+- `matchingAtCursor` finds a nested `()`, `[]`, or `{}` match adjacent to the caret without copying the document. The UI requests matching only when the cursor or document revision changes and caches the result for painting. Worst-case search can traverse the span to a matching bracket; no language parser or comment/string index is implemented.
+- `emptyPairAtCursor` identifies enabled adjacent pairs for atomic paired deletion.
 
 ## Editor View (`ui::EditorView`)
 
 - Each open document has one `EditorView`, created and owned by the Main Window's editor stack. It borrows the document-owned buffer and owns that document's `CursorManager`, `SelectionManager`, `EditingEngine`, and `UndoRedoManager`; the renderer borrows those interfaces.
-- The view handles text input, Backspace/Delete, Enter with inherited indentation, Tab insertion, arrow/Home/End navigation, Shift selection, Select All, copy/cut/paste, undo/redo, mouse cursor placement, drag selection, and double-click word selection. Editing is routed through `UndoRedoManager` and `EditingEngine`; document contents remain owned by the existing document/buffer layer.
+- The view handles text input, Backspace/Delete, Enter with inherited indentation, Tab insertion, arrow/Home/End navigation, Shift selection, Select All, copy/cut/paste, undo/redo, mouse cursor placement, drag selection, and double-click word selection. Alt+Click toggles a secondary cursor; ordinary click returns to one cursor. Editing is routed through `UndoRedoManager` and `EditingEngine`; document contents remain owned by the existing document/buffer layer.
+- Paired insertion, existing-closer skipping, and empty-pair deletion use `BracketManager` and undo transactions. Multi-cursor typing, deletion, bracket pairing, and independent selections operate in one edit batch; conflicting duplicate/overlapping cursors are coalesced by retaining the primary/earlier cursor, while the engine rejects ambiguous edit ranges before mutation. Multi-selection clipboard text is joined with LF.
 - Switching tabs retains each live view and its cursor, selection, and history. Closing a document deletes its view. Successful in-place reloads increment `Document::contentGeneration`; the Main Window replaces the view so stale editor offsets and history cannot survive replaced contents.
 - The view reports edits to the Main Window for dirty-state presentation. Saving continues through `DocumentWorkflow`; no editor view performs file I/O. Open, Save, Save As, conflict handling, and unsaved-close decisions remain owned by existing document workflows and UI actions.
-- The input layer currently provides basic indentation and four-space Tab insertion. It does not implement bracket pairing, the full command/keybinding system, multi-cursor creation UI, or syntax services. Offscreen tests cover integration flows but do not validate native display behavior or large-file latency.
+- The input layer currently provides basic indentation and four-space Tab insertion. It does not provide language-aware quote/comment context, the full command/keybinding system, configurable indentation settings, or syntax services. Offscreen tests cover integration flows but do not validate native display behavior or large-file latency.
 
 ## Document and manager
 

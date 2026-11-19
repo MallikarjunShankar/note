@@ -28,6 +28,7 @@ public:
 
     void setSelection(std::size_t index, std::size_t anchor, std::size_t active);
     std::size_t addSelection(std::size_t anchor, std::size_t active);
+    bool removeSelection(std::size_t index);
     void setAnchor(std::size_t index, std::size_t offset);
     void setActive(std::size_t index, std::size_t offset);
     void clearSelection(std::size_t index);

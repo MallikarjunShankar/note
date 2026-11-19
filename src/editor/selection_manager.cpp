@@ -53,6 +53,13 @@ std::size_t SelectionManager::addSelection(std::size_t anchor, std::size_t activ
     return selections_.size() - 1;
 }
 
+bool SelectionManager::removeSelection(std::size_t index) {
+    if (index >= selections_.size()) return false;
+    selections_.erase(selections_.begin() +
+                      static_cast<std::vector<Selection>::difference_type>(index));
+    return true;
+}
+
 void SelectionManager::setAnchor(std::size_t index, std::size_t offset) {
     selectionAt(index).anchor = clampOffset(offset);
 }

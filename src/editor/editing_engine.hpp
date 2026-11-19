@@ -3,6 +3,7 @@
 #include "editor/text_buffer.hpp"
 
 #include <cstddef>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -29,6 +30,9 @@ public:
 
     [[nodiscard]] EditBatch insertText(
         std::string_view utf8Text, LineEnding bareLineEnding = LineEnding::lf);
+    [[nodiscard]] EditBatch insertTextAtCursorIndices(
+        std::span<const std::size_t> cursorIndices, std::string_view utf8Text,
+        LineEnding bareLineEnding = LineEnding::lf);
     [[nodiscard]] EditBatch backspace();
     [[nodiscard]] EditBatch deleteForward();
     [[nodiscard]] EditBatch insertNewline(
