@@ -11,6 +11,7 @@ qt_standard_project_setup()
 add_library(note_core
     src/editor/text_buffer.cpp
     src/editor/cursor_manager.cpp
+    src/editor/selection_manager.cpp
     src/documents/document.cpp
     src/documents/document_manager.cpp
     src/documents/tab_manager.cpp
@@ -43,6 +44,10 @@ if(BUILD_TESTING)
     add_executable(note_cursor_tests tests/editor/cursor_manager_tests.cpp)
     target_link_libraries(note_cursor_tests PRIVATE note_core)
     add_test(NAME note_cursor_tests COMMAND note_cursor_tests)
+
+    add_executable(note_selection_tests tests/editor/selection_manager_tests.cpp)
+    target_link_libraries(note_selection_tests PRIVATE note_core)
+    add_test(NAME note_selection_tests COMMAND note_selection_tests)
 
     add_executable(note_document_tests tests/documents/document_tests.cpp)
     target_link_libraries(note_document_tests PRIVATE note_core)
@@ -81,6 +86,7 @@ if(MSVC)
     target_compile_options(note_app_core PRIVATE /W4 /permissive-)
     if(BUILD_TESTING)
         target_compile_options(note_cursor_tests PRIVATE /W4 /permissive-)
+        target_compile_options(note_selection_tests PRIVATE /W4 /permissive-)
         target_compile_options(note_document_tests PRIVATE /W4 /permissive-)
         target_compile_options(note_document_workflow_tests PRIVATE /W4 /permissive-)
         target_compile_options(note_ui_smoke_tests PRIVATE /W4 /permissive-)
@@ -93,6 +99,7 @@ else()
     target_compile_options(note_app_core PRIVATE -Wall -Wextra -Wpedantic)
     if(BUILD_TESTING)
         target_compile_options(note_cursor_tests PRIVATE -Wall -Wextra -Wpedantic)
+        target_compile_options(note_selection_tests PRIVATE -Wall -Wextra -Wpedantic)
         target_compile_options(note_document_tests PRIVATE -Wall -Wextra -Wpedantic)
         target_compile_options(note_document_workflow_tests PRIVATE -Wall -Wextra -Wpedantic)
         target_compile_options(note_ui_smoke_tests PRIVATE -Wall -Wextra -Wpedantic)

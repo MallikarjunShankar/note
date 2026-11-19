@@ -19,6 +19,14 @@ These are the small Phase 02 interfaces available under `src/`. Qt is confined t
 - `clearSecondaryCursors`, `removeSecondaryCursor`, and `syncToBuffer` manage secondary cursor state and stale offsets.
 - `onTextReplaced(offset, removedBytes, insertedBytes)` adjusts cursor offsets after a completed buffer replacement. This is a cursor-state notification only; the manager does not insert or delete text.
 
+## Selection Manager (`editor::SelectionManager`)
+
+- `SelectionManager` accepts a `TextBuffer` reference and owns only selection state. Each selection stores an anchor and active endpoint as UTF-8 byte offsets.
+- `setSelection`, `addSelection`, `setAnchor`, and `setActive` clamp endpoints to document bounds and Unicode scalar boundaries. `normalizedRange` returns document-order `[begin, end)` coordinates; `hasSelection` distinguishes empty selections.
+- `clearSelection` collapses one selection to its active endpoint; `clearSelections` removes all selections. `syncToBuffer` clamps state after external buffer changes.
+- `onTextReplaced(offset, removedBytes, insertedBytes)` applies an explicit endpoint transformation after a completed `TextBuffer` replacement. Insertions at an endpoint shift it forward; endpoints inside a removed range map to the replacement end; invalid edit coordinates throw rather than being guessed.
+- Selection state is independent of `CursorManager`; an editing or input controller supplies cursor endpoints when extending or moving selections.
+
 ## Document and manager
 
 - `Document::buffer()` provides a reference; the manager owns its lifetime. `Document::metadata()` is read-only. `modified()` compares text revision with the last successful save revision.
