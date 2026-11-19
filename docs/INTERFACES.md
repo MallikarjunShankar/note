@@ -35,6 +35,14 @@ These are the small Phase 02 interfaces available under `src/`. Qt is confined t
 - Editing methods return `EditBatch` records containing each offset and removed/inserted text. These records are the integration boundary for the future Undo/Redo Manager; no undo history is owned here.
 - `CursorManager::setSecondaryCursor` updates an existing secondary cursor without transferring cursor ownership to the editing engine.
 
+## Undo/Redo Manager (`editor::UndoRedoManager`)
+
+- `UndoRedoManager` accepts the existing `TextBuffer`, `CursorManager`, `SelectionManager`, and `EditingEngine`; it owns only reversible transaction history.
+- The editing methods mirror `EditingEngine` and record insertion, deletion, newline, and selection replacement as atomic transactions. `undo` and `redo` replay edit batches without creating new history entries, then restore the captured cursor and selection states.
+- `beginTransaction`/`endTransaction` provide explicit grouping boundaries. Single-scalar typing and consecutive backspaces may group only when the editor state is unchanged between operations; cursor or selection movement and incompatible operations prevent grouping.
+- History memory is accounted as edit-record metadata, UTF-8 payloads, line-ending metadata, and captured cursor/selection state. `setMemoryLimit` evicts oldest complete transactions; an individual transaction larger than the limit is safely omitted.
+- Edit records retain `TextSnapshot` payloads so undo/redo restores exact UTF-8 text and LF/CRLF/CR metadata. No full-document snapshots are used.
+
 ## Document and manager
 
 - `Document::buffer()` provides a reference; the manager owns its lifetime. `Document::metadata()` is read-only. `modified()` compares text revision with the last successful save revision.

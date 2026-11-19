@@ -16,6 +16,8 @@ struct EditRecord {
     std::size_t offset{};
     std::string removedText;
     std::string insertedText;
+    TextSnapshot removedSnapshot;
+    TextSnapshot insertedSnapshot;
 };
 
 using EditBatch = std::vector<EditRecord>;

@@ -164,12 +164,25 @@ EditBatch EditingEngine::apply(std::vector<PendingEdit> edits,
     records.reserve(edits.size());
     for (const auto& edit : edits) {
         const auto removedText = buffer_.textRange(edit.offset, edit.length);
+        TextSnapshot removedSnapshot{removedText, {}};
+        for (std::size_t newline = 0; newline < buffer_.lineCount(); ++newline) {
+            const auto range = buffer_.lineRange(newline);
+            if (range.end >= edit.offset && range.end < edit.offset + edit.length)
+                removedSnapshot.lineEndings.push_back(buffer_.lineEnding(newline));
+        }
+        TextBuffer insertedBuffer(edit.insertedText);
+        auto insertedSnapshot = insertedBuffer.snapshot();
+        if (bareLineEnding != LineEnding::lf) {
+            for (auto& ending : insertedSnapshot.lineEndings) {
+                if (ending == LineEnding::lf) ending = bareLineEnding;
+            }
+        }
         buffer_.replace(edit.offset, edit.length, edit.insertedText, bareLineEnding);
-        const auto insertedBytes = TextBuffer(edit.insertedText).sizeBytes();
+        const auto insertedBytes = insertedSnapshot.utf8.size();
         cursors_.onTextReplaced(edit.offset, edit.length, insertedBytes);
         selections_.onTextReplaced(edit.offset, edit.length, insertedBytes);
-        records.push_back({edit.offset, removedText,
-                           TextBuffer(edit.insertedText).text()});
+        records.push_back({edit.offset, removedText, insertedSnapshot.utf8,
+                           std::move(removedSnapshot), insertedSnapshot});
     }
     if (clearSelections) selections_.clearSelections();
     return records;

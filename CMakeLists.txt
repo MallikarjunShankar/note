@@ -13,6 +13,7 @@ add_library(note_core
     src/editor/cursor_manager.cpp
     src/editor/selection_manager.cpp
     src/editor/editing_engine.cpp
+    src/editor/undo_redo_manager.cpp
     src/documents/document.cpp
     src/documents/document_manager.cpp
     src/documents/tab_manager.cpp
@@ -54,6 +55,10 @@ if(BUILD_TESTING)
     target_link_libraries(note_editing_tests PRIVATE note_core)
     add_test(NAME note_editing_tests COMMAND note_editing_tests)
 
+    add_executable(note_undo_redo_tests tests/editor/undo_redo_manager_tests.cpp)
+    target_link_libraries(note_undo_redo_tests PRIVATE note_core)
+    add_test(NAME note_undo_redo_tests COMMAND note_undo_redo_tests)
+
     add_executable(note_document_tests tests/documents/document_tests.cpp)
     target_link_libraries(note_document_tests PRIVATE note_core)
     add_test(NAME note_document_tests COMMAND note_document_tests)
@@ -93,6 +98,7 @@ if(MSVC)
         target_compile_options(note_cursor_tests PRIVATE /W4 /permissive-)
         target_compile_options(note_selection_tests PRIVATE /W4 /permissive-)
         target_compile_options(note_editing_tests PRIVATE /W4 /permissive-)
+        target_compile_options(note_undo_redo_tests PRIVATE /W4 /permissive-)
         target_compile_options(note_document_tests PRIVATE /W4 /permissive-)
         target_compile_options(note_document_workflow_tests PRIVATE /W4 /permissive-)
         target_compile_options(note_ui_smoke_tests PRIVATE /W4 /permissive-)
@@ -107,6 +113,7 @@ else()
         target_compile_options(note_cursor_tests PRIVATE -Wall -Wextra -Wpedantic)
         target_compile_options(note_selection_tests PRIVATE -Wall -Wextra -Wpedantic)
         target_compile_options(note_editing_tests PRIVATE -Wall -Wextra -Wpedantic)
+        target_compile_options(note_undo_redo_tests PRIVATE -Wall -Wextra -Wpedantic)
         target_compile_options(note_document_tests PRIVATE -Wall -Wextra -Wpedantic)
         target_compile_options(note_document_workflow_tests PRIVATE -Wall -Wextra -Wpedantic)
         target_compile_options(note_ui_smoke_tests PRIVATE -Wall -Wextra -Wpedantic)

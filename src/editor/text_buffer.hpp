@@ -52,9 +52,12 @@ public:
 
     void insert(std::size_t offset, std::string_view utf8Text,
                 LineEnding bareLineEnding = LineEnding::lf);
+    void insert(std::size_t offset, const TextSnapshot& snapshot);
     void erase(std::size_t offset, std::size_t length);
     void replace(std::size_t offset, std::size_t length, std::string_view utf8Text,
                  LineEnding bareLineEnding = LineEnding::lf);
+    void replace(std::size_t offset, std::size_t length,
+                 const TextSnapshot& snapshot);
 
 private:
     struct Impl;

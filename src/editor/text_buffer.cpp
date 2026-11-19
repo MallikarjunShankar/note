@@ -60,6 +60,21 @@ NormalizedText normalize(std::string_view input, LineEnding bareLineEnding = Lin
     return result;
 }
 
+NormalizedText normalizeSnapshot(const TextSnapshot& snapshot) {
+    if (!validUtf8(snapshot.utf8))
+        throw std::invalid_argument("text snapshot must contain valid UTF-8");
+    NormalizedText result{snapshot.utf8, snapshot.lineEndings};
+    std::size_t newlineCount = 0;
+    for (const auto character : result.text) {
+        if (character == '\r')
+            throw std::invalid_argument("text snapshot must use LF separators");
+        if (character == '\n') ++newlineCount;
+    }
+    if (newlineCount != result.endings.size())
+        throw std::invalid_argument("text snapshot line-ending metadata mismatch");
+    return result;
+}
+
 } // namespace
 
 struct TextBuffer::Impl {
@@ -406,13 +421,23 @@ TextSnapshot TextBuffer::snapshot() const {
 void TextBuffer::insert(std::size_t offset, std::string_view utf8Text, LineEnding bareLineEnding) {
     replace(offset, 0, utf8Text, bareLineEnding);
 }
-void TextBuffer::erase(std::size_t offset, std::size_t length) { replace(offset, length, {}); }
+void TextBuffer::insert(std::size_t offset, const TextSnapshot& snapshot) {
+    replace(offset, 0, snapshot);
+}
+void TextBuffer::erase(std::size_t offset, std::size_t length) {
+    replace(offset, length, std::string_view{});
+}
 void TextBuffer::replace(std::size_t offset, std::size_t length, std::string_view utf8Text,
                          LineEnding bareLineEnding) {
+    const auto value = normalize(utf8Text, bareLineEnding);
+    replace(offset, length, TextSnapshot{value.text, value.endings});
+}
+void TextBuffer::replace(std::size_t offset, std::size_t length,
+                         const TextSnapshot& snapshot) {
     if (offset > sizeBytes() || length > sizeBytes() - offset) throw std::out_of_range("replace range");
     if (!impl_->boundary(offset) || !impl_->boundary(offset + length))
         throw std::invalid_argument("edit range must start and end on UTF-8 boundaries");
-    auto value = normalize(utf8Text, bareLineEnding);
+    auto value = normalizeSnapshot(snapshot);
     if (length == 0 && value.text.empty()) return;
     auto first = impl_->split(std::move(impl_->root), offset);
     auto second = impl_->split(std::move(first.right), length);
