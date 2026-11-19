@@ -45,6 +45,8 @@ public:
     [[nodiscard]] std::string textRange(std::size_t offset, std::size_t length) const;
     [[nodiscard]] LineRange lineRange(std::size_t line) const;
     [[nodiscard]] std::string lineText(std::size_t line) const;
+    [[nodiscard]] bool isScalarBoundary(std::size_t offset) const;
+    [[nodiscard]] unsigned char byteAt(std::size_t offset) const;
     [[nodiscard]] LineEnding lineEnding(std::size_t newlineIndex) const;
     [[nodiscard]] TextSnapshot snapshot() const;
 

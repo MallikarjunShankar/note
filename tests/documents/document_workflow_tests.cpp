@@ -129,7 +129,11 @@ void testSaveAsCollisionAndCloseChoices() {
     require(cancelledClose.status == OperationStatus::cancelled && workflow.findDocument(firstId) == first &&
             workflow.tabs().contains(firstId), "cancel close preserves document and tab");
 
-    const auto replaceExisting = workflow.saveAs(firstId, existingTarget);
+    const auto existingInspection = workflow.inspectFile(existingTarget);
+    require(existingInspection.exists && existingInspection.metadata.hasFingerprint,
+            "existing Save As target can be fingerprinted for explicit replacement");
+    const auto replaceExisting = workflow.saveAs(firstId, existingTarget, true,
+                                                 existingInspection.metadata.sha256);
     require(replaceExisting.status == OperationStatus::success && !first->modified() &&
             first->metadata().path == existingTarget && readFile(existingTarget) == QByteArray("one changed", 11),
             "Save As atomically replaces an existing destination and updates association after success");

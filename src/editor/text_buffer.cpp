@@ -385,6 +385,13 @@ std::string TextBuffer::lineText(std::size_t line) const {
     const auto range = lineRange(line);
     return textRange(range.begin, range.end - range.begin);
 }
+bool TextBuffer::isScalarBoundary(std::size_t offset) const {
+    return offset <= sizeBytes() && impl_->boundary(offset);
+}
+unsigned char TextBuffer::byteAt(std::size_t offset) const {
+    if (offset >= sizeBytes()) throw std::out_of_range("text buffer byte index");
+    return static_cast<unsigned char>(impl_->byteAt(offset));
+}
 LineEnding TextBuffer::lineEnding(std::size_t newlineIndex) const {
     if (newlineIndex >= impl_->newlines(impl_->root)) throw std::out_of_range("newline index");
     return impl_->findEnding(newlineIndex);

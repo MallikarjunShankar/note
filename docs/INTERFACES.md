@@ -5,9 +5,19 @@ These are the small Phase 02 interfaces available under `src/`. Qt is confined t
 ## Text buffer (`editor::TextBuffer`)
 
 - `sizeBytes()`, `lineCount()`, `revision()`, `pieceCount()`, and `estimatedStorageBytes()` provide size and diagnostic data.
-- `text()`, `textRange(offset, length)`, `lineText(line)`, `lineRange(line)`, and `snapshot()` provide read access. Ranges use UTF-8 byte offsets, require Unicode scalar boundaries, and exclude the LF separator from a line range.
+- `text()`, `textRange(offset, length)`, `lineText(line)`, `lineRange(line)`, `isScalarBoundary(offset)`, `byteAt(offset)`, and `snapshot()` provide read access. Ranges use UTF-8 byte offsets, require Unicode scalar boundaries, and exclude the LF separator from a line range.
 - `insert(offset, utf8, bareLineEnding)`, `erase(offset, length)`, and `replace(offset, length, utf8, bareLineEnding)` mutate text and increment revision for a real change. Incoming CRLF and CR are canonicalized while their line-ending tags are retained. Bare LF uses the supplied default style.
 - Invalid UTF-8, out-of-range values, and boundaries inside a Unicode scalar fail with standard exceptions. The buffer is not internally synchronized; callers serialize access.
+
+## Cursor manager (`editor::CursorManager`)
+
+- `CursorManager` accepts a `TextBuffer` reference and owns only cursor state. It does not contain document text or perform file I/O.
+- Primary and secondary positions are UTF-8 byte offsets. `setPrimaryCursor`, `moveToOffset`, `addSecondaryCursor`, and line/column navigation clamp positions to document bounds and Unicode scalar boundaries.
+- `moveLeft`/`moveRight` move every active cursor horizontally. `moveUp`/`moveDown` move every active cursor vertically and retain a preferred byte column across shorter lines.
+- `moveToLineColumn(line, column)` uses 0-based line and UTF-8 byte-column coordinates. Empty lines, end-of-line positions, trailing newline lines, and the final line are supported.
+- `primaryOffset`, `primaryLocation`, `cursorCount`, `secondaryCursorCount`, `secondaryCursorOffsets`, and `secondaryCursorOffset` provide read access.
+- `clearSecondaryCursors`, `removeSecondaryCursor`, and `syncToBuffer` manage secondary cursor state and stale offsets.
+- `onTextReplaced(offset, removedBytes, insertedBytes)` adjusts cursor offsets after a completed buffer replacement. This is a cursor-state notification only; the manager does not insert or delete text.
 
 ## Document and manager
 
