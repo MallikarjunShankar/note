@@ -35,6 +35,8 @@ qt_add_executable(note
     src/main.cpp
     src/ui/document_preview.cpp
     src/ui/document_preview.hpp
+    src/ui/editor_renderer.cpp
+    src/ui/editor_renderer.hpp
     src/ui/main_window.cpp
     src/ui/main_window.hpp
 )
@@ -58,6 +60,16 @@ if(BUILD_TESTING)
     add_executable(note_undo_redo_tests tests/editor/undo_redo_manager_tests.cpp)
     target_link_libraries(note_undo_redo_tests PRIVATE note_core)
     add_test(NAME note_undo_redo_tests COMMAND note_undo_redo_tests)
+
+    add_executable(note_ui_renderer_tests
+        tests/ui/editor_renderer_tests.cpp
+        src/ui/editor_renderer.cpp
+        src/ui/editor_renderer.hpp
+    )
+    target_include_directories(note_ui_renderer_tests PRIVATE src)
+    target_link_libraries(note_ui_renderer_tests PRIVATE note_core Qt6::Widgets)
+    add_test(NAME note_ui_renderer_tests COMMAND note_ui_renderer_tests)
+    set_tests_properties(note_ui_renderer_tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
     add_executable(note_document_tests tests/documents/document_tests.cpp)
     target_link_libraries(note_document_tests PRIVATE note_core)
@@ -99,6 +111,7 @@ if(MSVC)
         target_compile_options(note_selection_tests PRIVATE /W4 /permissive-)
         target_compile_options(note_editing_tests PRIVATE /W4 /permissive-)
         target_compile_options(note_undo_redo_tests PRIVATE /W4 /permissive-)
+        target_compile_options(note_ui_renderer_tests PRIVATE /W4 /permissive-)
         target_compile_options(note_document_tests PRIVATE /W4 /permissive-)
         target_compile_options(note_document_workflow_tests PRIVATE /W4 /permissive-)
         target_compile_options(note_ui_smoke_tests PRIVATE /W4 /permissive-)
@@ -114,6 +127,7 @@ else()
         target_compile_options(note_selection_tests PRIVATE -Wall -Wextra -Wpedantic)
         target_compile_options(note_editing_tests PRIVATE -Wall -Wextra -Wpedantic)
         target_compile_options(note_undo_redo_tests PRIVATE -Wall -Wextra -Wpedantic)
+        target_compile_options(note_ui_renderer_tests PRIVATE -Wall -Wextra -Wpedantic)
         target_compile_options(note_document_tests PRIVATE -Wall -Wextra -Wpedantic)
         target_compile_options(note_document_workflow_tests PRIVATE -Wall -Wextra -Wpedantic)
         target_compile_options(note_ui_smoke_tests PRIVATE -Wall -Wextra -Wpedantic)

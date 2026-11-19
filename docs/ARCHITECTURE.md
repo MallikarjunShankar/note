@@ -28,6 +28,7 @@ The recommendation is technically informed but still provisional: measurements u
 - `src/application/document_workflow.*`: coordinates document creation/open/save/close, the Document Manager, and tab order without owning document content.
 - `src/ui/main_window.*`: minimal File menu, Qt actions/shortcuts, native dialogs, tab bar, close prompts, and status presentation.
 - `src/ui/document_preview.*`: bounded, read-only projection of the active buffer for lifecycle demonstration; not the production editor view.
+- `src/ui/editor_renderer.*`: project-owned Qt Widgets viewport that paints visible buffer lines, selections, and cursors from non-owning editor-manager references; it is not yet wired into the main window editing workflow.
 - `src/editor/text_buffer.*`: framework-independent UTF-8 piece-table buffer with an indexed implicit-treap piece sequence and newline metadata.
 - `src/documents/`: document metadata/manager, ID-only `TabManager`, and Qt Core file service using atomic `QSaveFile` writes.
 - `CMakeLists.txt`: C++20 executable and Qt Widgets dependency.

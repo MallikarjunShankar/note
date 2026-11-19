@@ -43,6 +43,14 @@ These are the small Phase 02 interfaces available under `src/`. Qt is confined t
 - History memory is accounted as edit-record metadata, UTF-8 payloads, line-ending metadata, and captured cursor/selection state. `setMemoryLimit` evicts oldest complete transactions; an individual transaction larger than the limit is safely omitted.
 - Edit records retain `TextSnapshot` payloads so undo/redo restores exact UTF-8 text and LF/CRLF/CR metadata. No full-document snapshots are used.
 
+## Editor Renderer (`ui::EditorRenderer`)
+
+- `EditorRenderer` is a Qt Widgets `QAbstractScrollArea` that accepts non-owning references to a `TextBuffer`, `CursorManager`, and `SelectionManager`. It owns viewport presentation state only and performs no editing or file I/O.
+- `EditorRenderConfiguration` centralizes font, tab width, line height, foreground, background, selection, and caret colors. Defaults are minimal and extensible without introducing the complete settings system.
+- `visibleLineRange`, `scrollToLine`, and `setHorizontalOffset` expose viewport positioning. Painting requests only visible line ranges plus one small guard row; it does not materialize the document.
+- `cursorGeometry` and `selectionGeometry` expose scalar-safe caret and single/multiline selection geometry for focused tests and future input/render integration. Tabs use configurable tab stops and Unicode text is measured through Qt font metrics.
+- The renderer is registered in the application build and tested offscreen. `DocumentPreview` remains the current Main Window projection until editor state ownership and editing input are integrated.
+
 ## Document and manager
 
 - `Document::buffer()` provides a reference; the manager owns its lifetime. `Document::metadata()` is read-only. `modified()` compares text revision with the last successful save revision.
