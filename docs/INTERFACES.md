@@ -48,8 +48,17 @@ These are the small Phase 02 interfaces available under `src/`. Qt is confined t
 - `EditorRenderer` is a Qt Widgets `QAbstractScrollArea` that accepts non-owning references to a `TextBuffer`, `CursorManager`, and `SelectionManager`. It owns viewport presentation state only and performs no editing or file I/O.
 - `EditorRenderConfiguration` centralizes font, tab width, line height, foreground, background, selection, and caret colors. Defaults are minimal and extensible without introducing the complete settings system.
 - `visibleLineRange`, `scrollToLine`, and `setHorizontalOffset` expose viewport positioning. Painting requests only visible line ranges plus one small guard row; it does not materialize the document.
-- `cursorGeometry` and `selectionGeometry` expose scalar-safe caret and single/multiline selection geometry for focused tests and future input/render integration. Tabs use configurable tab stops and Unicode text is measured through Qt font metrics.
-- The renderer is registered in the application build and tested offscreen. `DocumentPreview` remains the current Main Window projection until editor state ownership and editing input are integrated.
+- `cursorGeometry` and `selectionGeometry` expose scalar-safe caret and single/multiline selection geometry. `offsetAtPosition` maps viewport coordinates to UTF-8 scalar boundaries; `ensureCursorVisible` scrolls a caret into view, and `refreshFromModel` updates viewport and scrollbar state after external edits.
+- Tabs use configurable tab stops and Unicode text is measured through Qt font metrics. Painting limits line processing to the viewport plus a small guard row.
+- The renderer is tested offscreen; this does not establish real-display latency or performance targets.
+
+## Editor View (`ui::EditorView`)
+
+- Each open document has one `EditorView`, created and owned by the Main Window's editor stack. It borrows the document-owned buffer and owns that document's `CursorManager`, `SelectionManager`, `EditingEngine`, and `UndoRedoManager`; the renderer borrows those interfaces.
+- The view handles text input, Backspace/Delete, Enter with inherited indentation, Tab insertion, arrow/Home/End navigation, Shift selection, Select All, copy/cut/paste, undo/redo, mouse cursor placement, drag selection, and double-click word selection. Editing is routed through `UndoRedoManager` and `EditingEngine`; document contents remain owned by the existing document/buffer layer.
+- Switching tabs retains each live view and its cursor, selection, and history. Closing a document deletes its view. Successful in-place reloads increment `Document::contentGeneration`; the Main Window replaces the view so stale editor offsets and history cannot survive replaced contents.
+- The view reports edits to the Main Window for dirty-state presentation. Saving continues through `DocumentWorkflow`; no editor view performs file I/O. Open, Save, Save As, conflict handling, and unsaved-close decisions remain owned by existing document workflows and UI actions.
+- The input layer currently provides basic indentation and four-space Tab insertion. It does not implement bracket pairing, the full command/keybinding system, multi-cursor creation UI, or syntax services. Offscreen tests cover integration flows but do not validate native display behavior or large-file latency.
 
 ## Document and manager
 
@@ -65,7 +74,7 @@ These are the small Phase 02 interfaces available under `src/`. Qt is confined t
 - `platform::FileMonitor` wraps Qt `QFileSystemWatcher`, monitoring existing open files and their parent directories, then rebuilding watch registrations after events or application activation. The parent-directory watch catches deletion, moves and atomic replacement; the workflow determines actual state by file inspection. Watcher registration can fail or events can be lost, so activation and pre-save inspection are fallback checks.
 - `platform::pathToQString` / `pathFromQString` centralize Windows wide-path and POSIX UTF-8 conversions. `platform::openInExternalApplication` and `openTerminalInDirectory` isolate OS launch behavior.
 - Closing a dirty document requires a caller-supplied Save/Discard/Cancel choice. Save As for an untitled document requires a path; empty paths represent cancellation. Save failures and open errors do not remove tabs or mark content saved.
-- The Qt Main Window owns dialog and prompt presentation only. Its menu and keyboard shortcuts use the same `QAction` connections. There is no command registry in the current foundation, so no parallel command system is introduced.
+- The Qt Main Window owns dialog and prompt presentation, tab-to-view lifecycle, and editor presentation. File menu shortcuts use the same `QAction` connections; text input remains in `EditorView`. There is no command registry in the current foundation, so no parallel command system is introduced.
 - `ui::DocumentPreview` shows at most 16 KiB from the active document in a read-only widget. It is a temporary UI projection, never a source of text edits or document persistence.
 
 ## File service (`documents::FileService`)

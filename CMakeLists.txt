@@ -37,6 +37,8 @@ qt_add_executable(note
     src/ui/document_preview.hpp
     src/ui/editor_renderer.cpp
     src/ui/editor_renderer.hpp
+    src/ui/editor_view.cpp
+    src/ui/editor_view.hpp
     src/ui/main_window.cpp
     src/ui/main_window.hpp
 )
@@ -83,6 +85,10 @@ if(BUILD_TESTING)
         tests/ui/main_window_smoke.cpp
         src/ui/document_preview.cpp
         src/ui/document_preview.hpp
+        src/ui/editor_renderer.cpp
+        src/ui/editor_renderer.hpp
+        src/ui/editor_view.cpp
+        src/ui/editor_view.hpp
         src/ui/main_window.cpp
         src/ui/main_window.hpp
     )

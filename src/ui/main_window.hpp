@@ -3,6 +3,7 @@
 #include "application/document_workflow.hpp"
 
 #include <QMainWindow>
+#include <cstdint>
 #include <map>
 
 class QCloseEvent;
@@ -13,18 +14,18 @@ class QAction;
 class QTabBar;
 class QLabel;
 class QProgressDialog;
+class QStackedWidget;
 
 namespace note::ui {
 
-class DocumentPreview;
+class EditorView;
 
 class MainWindow final : public QMainWindow {
     Q_OBJECT
 public:
     explicit MainWindow(application::DocumentWorkflow& workflow, QWidget* parent = nullptr);
     ~MainWindow() override;
-    // Called by model-changing workflows and, once editing is integrated, by
-    // the Editor View after a committed edit.
+    // Called after model changes made outside the active editor.
     void refreshFromModel();
     void openPath(const std::filesystem::path& path);
 
@@ -38,6 +39,8 @@ private:
     void createActions();
     void refresh();
     void refreshPresentation();
+    void syncEditorViews();
+    void refreshAfterEdit(documents::DocumentId id);
     void openFile();
     void saveActive();
     void saveActiveAs();
@@ -57,7 +60,8 @@ private:
 
     application::DocumentWorkflow& workflow_;
     QTabBar* tabs_{};
-    DocumentPreview* preview_{};
+    QStackedWidget* editorStack_{};
+    QWidget* emptyEditor_{};
     QLabel* status_{};
     QAction* saveAction_{};
     QAction* saveAsAction_{};
@@ -66,6 +70,11 @@ private:
     QAction* terminalAction_{};
     bool closingResolved_{};
     std::map<application::DocumentWorkflow::OpenRequestId, QProgressDialog*> openProgress_;
+    struct EditorBinding {
+        std::uint64_t contentGeneration{};
+        EditorView* view{};
+    };
+    std::map<documents::DocumentId, EditorBinding> editorViews_;
 };
 
 } // namespace note::ui

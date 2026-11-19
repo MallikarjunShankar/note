@@ -3,7 +3,7 @@
 #include "documents/document.hpp"
 #include "platform/launch_services.hpp"
 #include "platform/path_resolver.hpp"
-#include "ui/document_preview.hpp"
+#include "ui/editor_view.hpp"
 
 #include <QAction>
 #include <QCloseEvent>
@@ -19,9 +19,9 @@
 #include <QMenuBar>
 #include <QMimeData>
 #include <QMessageBox>
-#include <QPlainTextEdit>
 #include <QPushButton>
 #include <QProgressDialog>
+#include <QStackedWidget>
 #include <QStatusBar>
 #include <QTabBar>
 #include <QVBoxLayout>
@@ -32,6 +32,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <optional>
+#include <set>
 #include <string>
 
 namespace note::ui {
@@ -63,9 +64,14 @@ MainWindow::MainWindow(application::DocumentWorkflow& workflow, QWidget* parent)
     tabs_->setUsesScrollButtons(true);
     layout->addWidget(tabs_);
 
-    preview_ = new DocumentPreview(central);
-    preview_->setObjectName(QStringLiteral("documentPreview"));
-    layout->addWidget(preview_, 1);
+    editorStack_ = new QStackedWidget(central);
+    editorStack_->setObjectName(QStringLiteral("editorStack"));
+    emptyEditor_ = new QLabel(tr("Create a document or open a file to get started."),
+                              editorStack_);
+    emptyEditor_->setObjectName(QStringLiteral("emptyEditorMessage"));
+    static_cast<QLabel*>(emptyEditor_)->setAlignment(Qt::AlignCenter);
+    editorStack_->addWidget(emptyEditor_);
+    layout->addWidget(editorStack_, 1);
     setCentralWidget(central);
 
     status_ = new QLabel(this);
@@ -156,6 +162,7 @@ QString MainWindow::displayName(const documents::Document& document) const {
 }
 
 void MainWindow::refresh() {
+    syncEditorViews();
     tabs_->blockSignals(true);
     while (tabs_->count() > 0) tabs_->removeTab(tabs_->count() - 1);
     int activeIndex = -1;
@@ -181,8 +188,13 @@ void MainWindow::refreshFromModel() {
 
 void MainWindow::refreshPresentation() {
     const auto* document = workflow_.activeDocument();
-    preview_->showDocument(document);
     const bool hasDocument = document != nullptr;
+    auto activeView = editorViews_.find(document ? document->id() : 0);
+    editorStack_->setCurrentWidget(
+        hasDocument && activeView != editorViews_.end() ? activeView->second.view
+                                                        : emptyEditor_);
+    if (hasDocument && activeView != editorViews_.end())
+        activeView->second.view->refreshFromModel();
     saveAction_->setEnabled(hasDocument);
     saveAsAction_->setEnabled(hasDocument);
     closeAction_->setEnabled(hasDocument);
@@ -195,12 +207,58 @@ void MainWindow::refreshPresentation() {
         status_->setText(tr("No document"));
         return;
     }
+
     const auto name = displayName(*document);
     setWindowTitle(tr("%1%2 — Note").arg(name, document->modified() ? QStringLiteral("*") : QString{}));
     status_->setText(tr("%1 lines · %2 bytes%3")
         .arg(static_cast<qulonglong>(document->buffer().lineCount()))
         .arg(static_cast<qulonglong>(document->buffer().sizeBytes()))
         .arg(document->modified() ? tr(" · Modified") : QString{}));
+}
+
+void MainWindow::syncEditorViews() {
+    std::set<documents::DocumentId> live;
+    for (const auto id : workflow_.tabs().order()) {
+        auto* document = workflow_.findDocument(id);
+        if (!document) continue;
+        live.insert(id);
+        auto found = editorViews_.find(id);
+        if (found != editorViews_.end() &&
+            found->second.contentGeneration == document->contentGeneration())
+            continue;
+        if (found != editorViews_.end()) {
+            editorStack_->removeWidget(found->second.view);
+            delete found->second.view;
+            editorViews_.erase(found);
+        }
+        auto* view = new EditorView(document->buffer(),
+                                    document->metadata().preferredLineEnding,
+                                    editorStack_);
+        view->setDocumentChangedCallback([this, id] { refreshAfterEdit(id); });
+        editorStack_->addWidget(view);
+        editorViews_.emplace(id, EditorBinding{document->contentGeneration(), view});
+    }
+    for (auto it = editorViews_.begin(); it != editorViews_.end();) {
+        if (live.contains(it->first)) {
+            ++it;
+            continue;
+        }
+        editorStack_->removeWidget(it->second.view);
+        delete it->second.view;
+        it = editorViews_.erase(it);
+    }
+}
+
+void MainWindow::refreshAfterEdit(documents::DocumentId id) {
+    const auto* document = workflow_.findDocument(id);
+    if (!document) return;
+    const auto index = workflow_.tabs().indexOf(id);
+    if (index && static_cast<int>(*index) < tabs_->count()) {
+        auto label = displayName(*document);
+        if (document->modified()) label += QLatin1Char('*');
+        tabs_->setTabText(static_cast<int>(*index), label);
+    }
+    refreshPresentation();
 }
 
 void MainWindow::openFile() {

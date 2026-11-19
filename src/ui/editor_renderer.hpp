@@ -48,6 +48,9 @@ public:
     void scrollToLine(std::size_t line);
     void setHorizontalOffset(qreal offset);
     [[nodiscard]] qreal horizontalOffset() const noexcept;
+    [[nodiscard]] std::size_t offsetAtPosition(const QPointF& position) const;
+    void ensureCursorVisible(std::size_t offset);
+    void refreshFromModel();
 
     [[nodiscard]] QRectF cursorGeometry(std::size_t cursorIndex) const;
     [[nodiscard]] QVector<QRectF> selectionGeometry(std::size_t selectionIndex) const;

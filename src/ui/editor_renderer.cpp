@@ -68,6 +68,49 @@ qreal EditorRenderer::horizontalOffset() const noexcept {
     return horizontalOffset_;
 }
 
+std::size_t EditorRenderer::offsetAtPosition(const QPointF& position) const {
+    const auto lineCount = buffer_.lineCount();
+    const auto row = std::max<qreal>(0, position.y()) / effectiveLineHeight();
+    const auto line = std::min<std::size_t>(
+        firstVisibleLine() + static_cast<std::size_t>(row), lineCount - 1);
+    const auto range = buffer_.lineRange(line);
+    const auto layout = layoutLine(line);
+    const auto targetX = position.x() + horizontalOffset_;
+    std::size_t best = range.begin;
+    auto bestDistance = std::abs(targetX);
+    for (std::size_t offset = range.begin + 1; offset <= range.end; ++offset) {
+        if (!buffer_.isScalarBoundary(offset)) continue;
+        const auto x = xForByte(layout, range.begin, offset);
+        const auto distance = std::abs(targetX - x);
+        if (distance < bestDistance) {
+            best = offset;
+            bestDistance = distance;
+        }
+    }
+    return best;
+}
+
+void EditorRenderer::ensureCursorVisible(std::size_t offset) {
+    const auto location = cursors_.lineAndColumn(offset);
+    const auto rows = static_cast<std::size_t>(
+        std::max(1, viewport()->height() / effectiveLineHeight()));
+    const auto first = firstVisibleLine();
+    if (location.line < first) scrollToLine(location.line);
+    else if (location.line >= first + rows) scrollToLine(location.line - rows + 1);
+
+    const auto range = buffer_.lineRange(location.line);
+    const auto layout = layoutLine(location.line);
+    const auto cursorX = xForByte(layout, range.begin, offset);
+    if (cursorX < horizontalOffset_) setHorizontalOffset(cursorX);
+    else if (cursorX > horizontalOffset_ + viewport()->width())
+        setHorizontalOffset(cursorX - viewport()->width() + 1);
+}
+
+void EditorRenderer::refreshFromModel() {
+    updateScrollBar();
+    invalidateViewport();
+}
+
 int EditorRenderer::effectiveLineHeight() const {
     if (configuration_.lineHeight > 0) return configuration_.lineHeight;
     return std::max(1, QFontMetrics(configuration_.font).height() + 2);
@@ -197,13 +240,26 @@ void EditorRenderer::paintEvent(QPaintEvent*) {
         painter.setClipRect(lineRect);
         for (std::size_t selection = 0; selection < selections_.selectionCount();
              ++selection) {
+            if (!selections_.hasSelection(selection)) continue;
+            const auto selected = selections_.normalizedRange(selection);
+            if (selected.end <= range.begin || selected.begin > range.end) continue;
+            const auto start = std::max(selected.begin, range.begin);
+            const auto end = std::min(selected.end, range.end);
+            auto xStart = xForByte(layout, range.begin, start);
+            auto xEnd = xForByte(layout, range.begin, end);
+            if (xStart == xEnd && selected.end > range.end)
+                xEnd += QFontMetricsF(configuration_.font).horizontalAdvance(QLatin1Char(' '));
             painter.setBrush(configuration_.selection);
             painter.setPen(Qt::NoPen);
-            for (const auto& rectangle : selectionGeometry(selection))
-                painter.drawRect(rectangle);
+            painter.drawRect(QRectF(origin.x() + xStart, origin.y(),
+                                    std::max<qreal>(1, xEnd - xStart),
+                                    static_cast<qreal>(effectiveLineHeight())));
         }
         painter.setPen(configuration_.foreground);
-        painter.drawText(origin, layout.display);
+        const QFontMetrics metrics(configuration_.font);
+        const auto baseline = origin.y() + metrics.ascent() +
+            std::max(0, (effectiveLineHeight() - metrics.height()) / 2);
+        painter.drawText(QPointF(origin.x(), baseline), layout.display);
         painter.restore();
         ++lastPaintedLines_;
         (void)range;

@@ -43,18 +43,21 @@ public:
     [[nodiscard]] const editor::TextBuffer& buffer() const noexcept { return buffer_; }
     [[nodiscard]] const DocumentMetadata& metadata() const noexcept { return metadata_; }
     [[nodiscard]] bool modified() const noexcept { return savedRevision_ != buffer_.revision(); }
+    [[nodiscard]] std::uint64_t contentGeneration() const noexcept { return contentGeneration_; }
 
 private:
     friend class DocumentManager;
     friend class FileService;
     Document(DocumentId id, editor::TextBuffer& buffer, DocumentMetadata metadata);
     bool recordSuccessfulSave(std::uint64_t savedRevision, DocumentMetadata metadata);
+    void recordContentReplacement() noexcept { ++contentGeneration_; }
     void recordExternalFileState(ExternalFileState state) noexcept { metadata_.externalFileState = state; }
 
     DocumentId id_{};
     editor::TextBuffer& buffer_;
     DocumentMetadata metadata_;
     std::uint64_t savedRevision_{};
+    std::uint64_t contentGeneration_{};
 };
 
 } // namespace note::documents

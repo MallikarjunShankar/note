@@ -72,6 +72,7 @@ bool DocumentManager::replaceOpenedContents(DocumentId id,
     *it->second.buffer = std::move(*buffer);
     const auto revision = it->second.buffer->revision();
     (void)it->second.document->recordSuccessfulSave(revision, std::move(metadata));
+    it->second.document->recordContentReplacement();
     return true;
 }
 

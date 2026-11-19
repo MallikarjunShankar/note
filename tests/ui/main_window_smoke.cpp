@@ -1,17 +1,23 @@
 #include "application/document_workflow.hpp"
+#include "ui/editor_view.hpp"
 #include "ui/main_window.hpp"
 
 #include <QAction>
 #include <QAbstractButton>
 #include <QApplication>
+#include <QClipboard>
+#include <QEventLoop>
 #include <QFile>
+#include <QFontMetricsF>
+#include <QKeyEvent>
 #include <QMetaObject>
 #include <QMessageBox>
-#include <QPlainTextEdit>
+#include <QMouseEvent>
 #include <QProgressDialog>
 #include <QPushButton>
 #include <QTemporaryDir>
 #include <QTabBar>
+#include <QStackedWidget>
 #include <QTimer>
 
 #include <iostream>
@@ -23,6 +29,17 @@ void require(bool condition, const char* message) {
     if (!condition) throw std::runtime_error(message);
 }
 
+void sendKey(note::ui::EditorView& view, int key, Qt::KeyboardModifiers modifiers = {},
+             const QString& text = {}) {
+    QKeyEvent event(QEvent::KeyPress, key, modifiers, text);
+    QApplication::sendEvent(view.renderer(), &event);
+}
+
+note::ui::EditorView* activeEditorView(note::ui::MainWindow& window) {
+    auto* stack = window.findChild<QStackedWidget*>(QStringLiteral("editorStack"));
+    return stack ? qobject_cast<note::ui::EditorView*>(stack->currentWidget()) : nullptr;
+}
+
 } // namespace
 
 int main(int argc, char* argv[]) {
@@ -32,11 +49,12 @@ int main(int argc, char* argv[]) {
         note::ui::MainWindow window(workflow);
         window.show();
         auto* newAction = window.findChild<QAction*>(QStringLiteral("newDocumentAction"));
+        auto* saveAction = window.findChild<QAction*>(QStringLiteral("saveDocumentAction"));
         auto* closeAction = window.findChild<QAction*>(QStringLiteral("closeDocumentAction"));
         auto* tabs = window.findChild<QTabBar*>(QStringLiteral("documentTabs"));
-        auto* preview = window.findChild<QPlainTextEdit*>(QStringLiteral("documentPreview"));
-        require(newAction && closeAction && tabs && preview, "main window exposes file actions, tabs, and preview");
-        require(preview->isReadOnly(), "document preview cannot modify text");
+        auto* editorStack = window.findChild<QStackedWidget*>(QStringLiteral("editorStack"));
+        require(newAction && saveAction && closeAction && tabs && editorStack,
+                "main window exposes file actions, tabs, and editor surface");
         require(tabs->count() == 0 && !closeAction->isEnabled(), "empty workspace state");
 
         newAction->trigger();
@@ -52,12 +70,77 @@ int main(int argc, char* argv[]) {
                 workflow.activeDocument()->id() == *workflow.tabs().at(0),
                 "tab selection activates its associated document");
         auto* active = workflow.activeDocument();
+        auto* editor = activeEditorView(window);
+        require(editor && &editor->buffer() == &active->buffer(),
+                "active editor view references active document buffer");
+        sendKey(*editor, Qt::Key_unknown, Qt::NoModifier, QStringLiteral("A"));
+        sendKey(*editor, Qt::Key_unknown, Qt::NoModifier, QString::fromUtf8("λ"));
+        require(active->buffer().text() == "Aλ" && editor->cursors().primaryOffset() == 3,
+                "keyboard inserts ASCII and Unicode through editing engine");
+        sendKey(*editor, Qt::Key_Left);
+        sendKey(*editor, Qt::Key_Backspace);
+        require(active->buffer().text() == "λ", "cursor movement and backspace");
+        sendKey(*editor, Qt::Key_Z, Qt::ControlModifier);
+        require(active->buffer().text() == "Aλ", "undo restores typed text");
+        sendKey(*editor, Qt::Key_Y, Qt::ControlModifier);
+        require(active->buffer().text() == "λ", "redo reapplies typed text");
+        editor->cursors().setPrimaryCursor(active->buffer().sizeBytes());
+        sendKey(*editor, Qt::Key_Left, Qt::ShiftModifier);
+        require(editor->selections().hasSelection(0),
+                "Shift+Arrow extends a keyboard selection");
+        sendKey(*editor, Qt::Key_A, Qt::ControlModifier);
+        sendKey(*editor, Qt::Key_C, Qt::ControlModifier);
+        require(QApplication::clipboard()->text() == QString::fromUtf8("λ"),
+                "copy selected Unicode text");
+        sendKey(*editor, Qt::Key_X, Qt::ControlModifier);
+        require(active->buffer().text().empty(), "cut removes selected text");
+        sendKey(*editor, Qt::Key_V, Qt::ControlModifier);
+        require(active->buffer().text() == "λ", "paste inserts clipboard text");
+
+        auto* viewport = editor->renderer()->viewport();
+        const auto clickPosition = QPointF(0, editor->renderer()->configuration().lineHeight > 0
+                                                  ? editor->renderer()->configuration().lineHeight / 2
+                                                  : 10);
+        QMouseEvent press(QEvent::MouseButtonPress, clickPosition, clickPosition, clickPosition,
+                          Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(viewport, &press);
+        require(editor->cursors().primaryOffset() == 0, "mouse click positions the cursor");
+        editor->cursors().setPrimaryCursor(active->buffer().sizeBytes());
+        QMouseEvent dragPress(QEvent::MouseButtonPress, clickPosition, clickPosition, clickPosition,
+                              Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(viewport, &dragPress);
+        const QPointF dragPosition(100, clickPosition.y());
+        QMouseEvent dragMove(QEvent::MouseMove, dragPosition, dragPosition, dragPosition,
+                             Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(viewport, &dragMove);
+        QMouseEvent dragRelease(QEvent::MouseButtonRelease, dragPosition, dragPosition,
+                                dragPosition, Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+        QApplication::sendEvent(viewport, &dragRelease);
+        require(editor->selections().hasSelection(0), "mouse drag selects text");
+        sendKey(*editor, Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
+        require(active->buffer().text() == "x", "typing replaces mouse selection");
+        sendKey(*editor, Qt::Key_Return);
+        require(active->buffer().text() == "x\n", "Enter inserts a newline");
+
+        tabs->setCurrentIndex(1);
+        auto* secondEditor = activeEditorView(window);
+        require(secondEditor && secondEditor != editor,
+                "switching tabs selects its independent editor view");
+        sendKey(*secondEditor, Qt::Key_unknown, Qt::NoModifier, QStringLiteral("other"));
+        require(workflow.activeDocument()->buffer().text() == "other",
+                "second document edits independently");
+        sendKey(*secondEditor, Qt::Key_Z, Qt::ControlModifier);
+        require(workflow.activeDocument()->buffer().text().empty(),
+                "second document undo restores its independent content");
+        tabs->setCurrentIndex(0);
+        editor = activeEditorView(window);
+        require(editor && editor->cursors().primaryOffset() == 2,
+                "tab switching preserves per-document cursor state");
+        active = workflow.activeDocument();
         active->buffer().insert(0, "unsaved");
         window.refreshFromModel();
         require(tabs->tabText(0).endsWith(QLatin1Char('*')) && window.windowTitle().contains(QLatin1Char('*')),
                 "modified marker is reflected in tab and window title");
-        require(preview->toPlainText() == QStringLiteral("unsaved"),
-                "preview reflects the active model contents");
         QTimer::singleShot(0, [] {
             auto* prompt = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
             if (prompt && prompt->button(QMessageBox::Cancel)) prompt->button(QMessageBox::Cancel)->click();
@@ -78,6 +161,10 @@ int main(int argc, char* argv[]) {
                 workflow.activeDocument()->id() == *workflow.tabs().at(0),
                 "discard closes dirty tab and selects its neighbor");
 
+        QTimer::singleShot(0, [] {
+            auto* prompt = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
+            if (prompt && prompt->button(QMessageBox::Discard)) prompt->button(QMessageBox::Discard)->click();
+        });
         closeAction->trigger();
         require(tabs->count() == 0 && workflow.documentCount() == 0 &&
                 !workflow.activeDocument() && !closeAction->isEnabled(),
@@ -137,12 +224,73 @@ int main(int argc, char* argv[]) {
         require(workflow.documentCount() == 1 && tabs->count() == 1 &&
                 workflow.activeDocument()->buffer().text() == "ready",
                 "successful async open publishes one complete document and tab");
+        auto* openedEditor = activeEditorView(window);
+        require(openedEditor != nullptr, "opened document gets an editor view");
+        const auto font = openedEditor->renderer()->configuration().font;
+        const auto clickX = QFontMetricsF(font).horizontalAdvance(QStringLiteral("r"));
+        const QPointF doubleClickPosition(clickX, 10);
+        QMouseEvent doubleClick(QEvent::MouseButtonDblClick, doubleClickPosition,
+                                doubleClickPosition, doubleClickPosition, Qt::LeftButton,
+                                Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(openedEditor->renderer()->viewport(), &doubleClick);
+        require(openedEditor->selections().hasSelection(0),
+                "double click selects a word");
+        openedEditor->cursors().setPrimaryCursor(0);
+        openedEditor->selections().clearSelections();
+        openedEditor->selections().addSelection(0, 0);
+        sendKey(*openedEditor, Qt::Key_unknown, Qt::NoModifier, QStringLiteral("!"));
+        require(workflow.activeDocument()->buffer().text() == "!ready" &&
+                    workflow.activeDocument()->modified(),
+                "opened document edits through the integrated editor");
+        saveAction->trigger();
+        QFile savedFile(smallPath);
+        require(savedFile.open(QIODevice::ReadOnly) && savedFile.readAll() == QByteArray("!ready") &&
+                    !workflow.activeDocument()->modified(),
+                "Save action persists editor changes");
+        openedEditor->cursors().setPrimaryCursor(4);
+        QFile externalChange(smallPath);
+        require(externalChange.open(QIODevice::WriteOnly | QIODevice::Truncate) &&
+                    externalChange.write("reloaded") == 8,
+                "could not prepare external reload fixture");
+        externalChange.close();
+        bool reloadSucceeded = false;
+        QEventLoop reloadLoop;
+        QTimer reloadTimeout;
+        reloadTimeout.setSingleShot(true);
+        QObject::connect(&reloadTimeout, &QTimer::timeout, &reloadLoop, &QEventLoop::quit);
+        const auto reloadRequest = workflow.reloadAsync(
+            workflow.activeDocument()->id(), true, {},
+            [&](auto, const auto& result) {
+                reloadSucceeded = static_cast<bool>(result);
+                reloadLoop.quit();
+            });
+        require(reloadRequest != 0, "external reload request was not accepted");
+        reloadTimeout.start(5000);
+        reloadLoop.exec();
+        window.refreshFromModel();
+        auto* reloadedEditor = activeEditorView(window);
+        require(reloadSucceeded && workflow.activeDocument()->buffer().text() == "reloaded" &&
+                    reloadedEditor && reloadedEditor->cursors().primaryOffset() == 0,
+                "reloaded content recreates editor state without stale offsets");
         closeAction->trigger();
         require(workflow.documentCount() == 0, "opened test document closes cleanly");
 
         newAction->trigger();
         workflow.activeDocument()->buffer().insert(0, "unsaved window document");
         window.refreshFromModel();
+        std::string manyLines;
+        manyLines.reserve(50000);
+        for (int line = 0; line < 10000; ++line) manyLines += "line\n";
+        workflow.activeDocument()->buffer().insert(0, manyLines);
+        window.refreshFromModel();
+        auto* largeEditor = activeEditorView(window);
+        require(largeEditor &&
+                    largeEditor->renderer()->visibleLineRange().end <
+                        workflow.activeDocument()->buffer().lineCount(),
+                "large document view renders only a viewport-sized line range");
+        largeEditor->renderer()->scrollToLine(5000);
+        require(largeEditor->renderer()->firstVisibleLine() == 5000,
+                "large document remains vertically navigable");
         QTimer::singleShot(0, [] {
             auto* prompt = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
             if (prompt && prompt->button(QMessageBox::Cancel)) prompt->button(QMessageBox::Cancel)->click();
