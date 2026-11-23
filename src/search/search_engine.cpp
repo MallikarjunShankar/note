@@ -1,138 +1,136 @@
 #include "search/search_engine.hpp"
 
 #include <algorithm>
-#include <chrono>
 
 namespace note::search {
 
 SearchResult SearchEngine::find(const editor::TextBuffer& buffer,
                                 const std::string& query,
                                 const SearchOptions& options,
-                                std::size_t maxMatches) const {
+                                std::size_t maxMatches,
+                                std::size_t from,
+                                std::chrono::milliseconds budget) const {
     SearchResult result;
+    result.resumeOffset = from;
     if (query.empty()) return result;
 
+    const auto needle =
+        QString::fromUtf8(query.c_str(), static_cast<qsizetype>(query.size()));
     QRegularExpression regex;
     if (options.regularExpression) {
         if (query.size() > 512) {
             result.status = SearchStatus::aborted;
             return result;
         }
-        regex = QRegularExpression(
-            QString::fromUtf8(query.c_str(), static_cast<qsizetype>(query.size())),
-            options.caseSensitive ? QRegularExpression::NoPatternOption
-                                  : QRegularExpression::CaseInsensitiveOption);
+        // Windows start at line starts, so ^ and $ mean line start/end.
+        QRegularExpression::PatternOptions patternOptions =
+            QRegularExpression::MultilineOption;
+        if (!options.caseSensitive)
+            patternOptions |= QRegularExpression::CaseInsensitiveOption;
+        regex = QRegularExpression(needle, patternOptions);
         if (!regex.isValid()) {
             result.status = SearchStatus::invalidPattern;
             return result;
         }
     }
 
-    const auto started = std::chrono::steady_clock::now();
-    std::string pending;
-    std::size_t windowBase = 0;
-    const auto processWindow = [&] {
-        QString chunk = QString::fromUtf8(pending.c_str(),
-                                          static_cast<qsizetype>(pending.size()));
-        const auto needle =
-            QString::fromUtf8(query.c_str(),
-                               static_cast<qsizetype>(query.size()));
-        std::size_t localOffset = 0;
-        while (localOffset < static_cast<std::size_t>(chunk.size()) &&
-               result.matches.size() < maxMatches) {
-            std::size_t begin = 0;
-            std::size_t length = 0;
-            if (options.regularExpression) {
-                auto match = regex.match(chunk,
-                                         static_cast<qsizetype>(localOffset));
-                if (!match.hasMatch()) break;
-                begin = static_cast<std::size_t>(match.capturedStart());
-                length = static_cast<std::size_t>(match.capturedLength());
-            } else {
-                const auto found = chunk.indexOf(
-                    needle, static_cast<qsizetype>(localOffset),
-                    options.caseSensitive ? Qt::CaseSensitive : Qt::CaseInsensitive);
-                if (found < 0) break;
-                begin = static_cast<std::size_t>(found);
-                length = static_cast<std::size_t>(needle.size());
-            }
-            const auto end = begin + length;
-            if (length == 0) {
-                ++localOffset;
-                continue;
-            }
-            if (options.wholeWord) {
-                const auto isWord = [](QChar c) {
-                    return c.isLetterOrNumber() || c == QLatin1Char('_');
-                };
-                if ((begin > 0 && isWord(chunk.at(static_cast<qsizetype>(begin - 1))) &&
-                     isWord(chunk.at(static_cast<qsizetype>(begin)))) ||
-                    (end < static_cast<std::size_t>(chunk.size()) &&
-                     isWord(chunk.at(static_cast<qsizetype>(end))) &&
-                     isWord(chunk.at(static_cast<qsizetype>(end - 1)))))
-                {
-                    localOffset = end;
-                    continue;
-                }
-            }
-            const auto byteBegin = windowBase +
-                static_cast<std::size_t>(
-                    chunk.left(static_cast<qsizetype>(begin)).toUtf8().size());
-            const auto byteLength =
-                static_cast<std::size_t>(
-                    chunk.mid(static_cast<qsizetype>(begin),
-                              static_cast<qsizetype>(length)).toUtf8().size());
-            result.matches.push_back({byteBegin, byteBegin + byteLength});
-            localOffset = end > begin ? end : begin + 1;
-        }
+    using Clock = std::chrono::steady_clock;
+    const auto started = Clock::now();
+    const auto isWord = [](QChar c) {
+        return c.isLetterOrNumber() || c == QLatin1Char('_');
     };
 
-    (void)buffer.visitSegments(
-        [&](std::string_view segment, std::span<const editor::LineEnding>) {
-            pending.append(segment);
-            while (pending.size() >= chunkBytesLimit) {
-                // Cut and overlap only at scalar starts: a window beginning with a
-                // continuation byte decodes to U+FFFD and shifts every byte offset.
-                const auto scalarStart = [&](std::size_t index) {
-                    while (index > 0 &&
-                           (static_cast<unsigned char>(pending[index]) & 0xC0) == 0x80)
-                        --index;
-                    return index;
-                };
-                const auto cut = scalarStart(chunkBytesLimit);
-                auto advance = scalarStart(cut > 512 ? cut - 512 : 0);
-                if (advance == 0) advance = cut;
-                std::string retained = pending.substr(advance);
-                pending.resize(cut);
-                processWindow();
-                windowBase += advance;
-                pending = std::move(retained);
-                if (result.matches.size() >= maxMatches) return false;
-                if (std::chrono::duration_cast<std::chrono::milliseconds>(
-                        std::chrono::steady_clock::now() - started).count() > 100) {
+    // Searches one window; matches starting at or after ownedBytes belong to the
+    // next window. Returns false if the search must stop.
+    const auto processWindow = [&](const std::string& text, std::size_t base,
+                                   std::size_t ownedBytes) {
+        const auto chunk =
+            QString::fromUtf8(text.data(), static_cast<qsizetype>(text.size()));
+        // Matches arrive in order, so UTF-16 -> UTF-8 offsets are traced forward.
+        qsizetype tracedChar = 0;
+        std::size_t tracedByte = 0;
+        const auto byteAt = [&](qsizetype index) {
+            for (; tracedChar < index; ++tracedChar) {
+                const auto c = chunk.at(tracedChar).unicode();
+                tracedByte += c < 0x80 ? 1 : c < 0x800 ? 2 : QChar::isSurrogate(c) ? 2 : 3;
+            }
+            return tracedByte;
+        };
+        qsizetype offset = 0;
+        while (offset < chunk.size() && result.matches.size() < maxMatches) {
+            qsizetype begin = 0;
+            qsizetype length = 0;
+            if (options.regularExpression) {
+                const auto match = regex.match(chunk, offset);
+                // Invalid here means PCRE2 hit its backtracking limit; the default
+                // limit bounds one call (~50-80 ms measured on a 4 GB i5 laptop).
+                if (!match.isValid()) {
                     result.status = SearchStatus::aborted;
                     return false;
                 }
+                if (!match.hasMatch()) break;
+                begin = match.capturedStart();
+                length = match.capturedLength();
+            } else {
+                begin = chunk.indexOf(needle, offset,
+                                      options.caseSensitive ? Qt::CaseSensitive
+                                                            : Qt::CaseInsensitive);
+                if (begin < 0) break;
+                length = needle.size();
             }
-            return true;
-        });
+            if (length == 0) {
+                offset = begin + 1;
+                if (offset < chunk.size() && chunk.at(offset).isLowSurrogate()) ++offset;
+                continue;
+            }
+            const auto end = begin + length;
+            if (options.wholeWord &&
+                ((begin > 0 && isWord(chunk.at(begin - 1)) && isWord(chunk.at(begin))) ||
+                 (end < chunk.size() && isWord(chunk.at(end)) && isWord(chunk.at(end - 1))))) {
+                offset = end;
+                continue;
+            }
+            const auto byteBegin = byteAt(begin);
+            if (byteBegin >= ownedBytes) break;
+            result.matches.push_back({base + byteBegin, base + byteAt(end)});
+            offset = end;
+        }
+        return true;
+    };
 
-    if (result.status != SearchStatus::aborted && !pending.empty()) {
-        processWindow();
+    const auto size = buffer.sizeBytes();
+    auto position = std::min(from, size);
+    while (position < size) {
+        auto text = buffer.textRange(position, std::min(chunkBytesLimit, size - position));
+        auto owned = text.size();
+        if (position + text.size() < size) {
+            // Cut after the last line break so the next window starts a line. A
+            // longer line is cut at a scalar start, overlapping by 512 bytes.
+            const auto newline = text.rfind('\n');
+            if (newline != std::string::npos) {
+                text.resize(newline + 1);
+                owned = text.size();
+            } else {
+                auto cut = text.size();
+                while (cut > 0 && !buffer.isScalarBoundary(position + cut)) --cut;
+                text.resize(cut);
+                owned = cut > 512 ? cut - 512 : cut;
+                while (owned > 0 && !buffer.isScalarBoundary(position + owned)) --owned;
+                if (owned == 0) owned = cut;
+            }
+        }
+        if (!processWindow(text, position, owned)) return result;
+        position += owned;
+        result.resumeOffset = position;
+        if (result.matches.size() >= maxMatches) {
+            result.status = SearchStatus::aborted;
+            return result;
+        }
+        if (position < size && Clock::now() - started > budget) {
+            result.status = SearchStatus::incomplete;
+            return result;
+        }
     }
-    std::sort(result.matches.begin(), result.matches.end(),
-              [](const SearchMatch& left, const SearchMatch& right) {
-                  return left.begin < right.begin;
-              });
-    result.matches.erase(
-        std::unique(result.matches.begin(), result.matches.end(),
-                    [](const SearchMatch& left, const SearchMatch& right) {
-                        return left.begin == right.begin && left.end == right.end;
-                    }),
-        result.matches.end());
-    if (result.status != SearchStatus::aborted &&
-        result.matches.size() >= maxMatches)
-        result.status = SearchStatus::aborted;
     return result;
 }
 

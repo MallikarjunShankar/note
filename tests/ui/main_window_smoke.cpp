@@ -11,6 +11,7 @@
 #include <QContextMenuEvent>
 #include <QDialog>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QEventLoop>
 #include <QFile>
 #include <QFontMetricsF>
@@ -139,6 +140,57 @@ int main(int argc, char* argv[]) {
             require(searchWorkflow.activeDocument()->buffer().textRange(begin, 2) == "ab" &&
                         std::max(selection.anchor, selection.active) - begin == 2,
                     "Find Next re-runs a stale search after edits with the panel closed");
+            searchWorkflow.shutdown();
+        }
+        {
+            // Large documents are searched in slices: typing a pattern returns
+            // quickly, and Find Next waits for a match beyond the first slice.
+            note::application::DocumentWorkflow searchWorkflow;
+            note::ui::MainWindow searchWindow(searchWorkflow);
+            searchWindow.show();
+            searchWindow.findChild<QAction*>(QStringLiteral("newDocumentAction"))->trigger();
+            auto* view = activeEditorView(searchWindow);
+            require(view, "large search fixture editor");
+            std::string text;
+            while (text.size() < 12u * 1024 * 1024)
+                text += "    const auto value = compute(index, buffer.size());\n";
+            const auto expected = text.size();
+            text += "needle";
+            view->replaceRange(0, 0, text);
+            searchWindow.findChild<QAction*>(QStringLiteral("search_findAction"))->trigger();
+            auto* panel = searchWindow.findChild<QDialog*>(QStringLiteral("searchPanel"));
+            auto* pattern = panel ? panel->findChild<QLineEdit*>() : nullptr;
+            require(panel && pattern, "large search panel");
+            pattern->setText(QStringLiteral("needle"));
+            searchWindow.findChild<QAction*>(QStringLiteral("search_nextAction"))->trigger();
+            QLabel* status = nullptr;
+            for (auto* label : panel->findChildren<QLabel*>()) status = label;
+            QElapsedTimer waited;
+            waited.start();
+            while (status->text().startsWith(QStringLiteral("Searching")) && waited.elapsed() < 60000)
+                QApplication::processEvents();
+            const auto selection = view->selections().selection(0);
+            require(status->text() == QStringLiteral("1 match(es)") &&
+                        std::min(selection.anchor, selection.active) == expected &&
+                        std::max(selection.anchor, selection.active) == expected + 6,
+                    "sliced search finds and selects a match at the end of 12 MiB");
+            // Replace All right after typing must also replace matches the
+            // background slices have not reached yet.
+            view->replaceRange(0, 0, "needle ");
+            searchWindow.findChild<QAction*>(QStringLiteral("search_replaceAction"))->trigger();
+            const auto edits = panel->findChildren<QLineEdit*>();
+            require(edits.size() >= 2, "replace field exists");
+            edits[1]->setText(QStringLiteral("pin"));
+            pattern->setText(QStringLiteral("needle"));
+            QAbstractButton* replaceAll = nullptr;
+            for (auto* button : panel->findChildren<QAbstractButton*>())
+                if (button->text() == QStringLiteral("Replace All")) replaceAll = button;
+            require(replaceAll, "Replace All button");
+            replaceAll->click();
+            const auto& replaced = searchWorkflow.activeDocument()->buffer();
+            require(replaced.textRange(0, 4) == "pin " &&
+                        replaced.textRange(replaced.sizeBytes() - 3, 3) == "pin",
+                    "Replace All replaces matches beyond the first search slice");
             searchWorkflow.shutdown();
         }
         note::application::DocumentWorkflow workflow;
