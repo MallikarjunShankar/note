@@ -167,6 +167,22 @@ if(BUILD_TESTING)
     set_tests_properties(note_session_lifecycle_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+    add_executable(note_crash_recovery_tests
+        tests/application/crash_recovery_tests.cpp
+        src/ui/document_preview.cpp
+        src/ui/editor_renderer.cpp
+        src/ui/editor_view.cpp
+        src/ui/main_window.cpp
+        src/ui/command_palette.cpp
+        src/ui/search_panel.cpp
+        src/ui/settings_dialog.cpp
+    )
+    target_include_directories(note_crash_recovery_tests PRIVATE src)
+    target_link_libraries(note_crash_recovery_tests PRIVATE note_app_core Qt6::Widgets)
+    add_test(NAME note_crash_recovery_tests COMMAND note_crash_recovery_tests)
+    set_tests_properties(note_crash_recovery_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 300)
+
     add_executable(note_document_bench
         benchmarks/document_foundation/document_bench.cpp
         benchmarks/editor_prototype/text_buffers.cpp
