@@ -37,5 +37,22 @@ int main(int argc, char* argv[]) {
         note::platform::pathFromQString(temporary.filePath("missing")));
     require(!missingDirectory.success && !missingDirectory.error.empty(),
             "terminal launching reports missing directories without launching");
+
+    // Regression: note.exe was built for the console subsystem, so starting it
+    // from Explorer also opened a console window. PE subsystem 2 = Windows GUI.
+    if (argc > 1) {
+        QFile executable(QString::fromLocal8Bit(argv[1]));
+        require(executable.open(QIODevice::ReadOnly), "note executable is readable");
+        const auto image = executable.read(4096);
+        require(image.size() > 0x40 && image.startsWith("MZ"), "note executable is a PE image");
+        const auto peOffset = static_cast<unsigned char>(image[0x3C]) |
+                              static_cast<unsigned char>(image[0x3D]) << 8;
+        const auto subsystemOffset = peOffset + 4 + 20 + 68; // signature, COFF header
+        require(image.size() > subsystemOffset + 1 &&
+                    image.mid(peOffset, 4) == QByteArray("PE\0\0", 4),
+                "note executable has a PE header");
+        require(static_cast<unsigned char>(image[subsystemOffset]) == 2,
+                "note.exe uses the Windows GUI subsystem");
+    }
     return 0;
 }

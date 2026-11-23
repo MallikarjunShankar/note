@@ -59,6 +59,8 @@ qt_add_executable(note
 )
 
 target_link_libraries(note PRIVATE note_app_core Qt6::Widgets)
+# A GUI-subsystem program: no console window opens beside Note on Windows.
+set_target_properties(note PROPERTIES WIN32_EXECUTABLE TRUE)
 
 include(CTest)
 if(BUILD_TESTING)
@@ -97,7 +99,12 @@ if(BUILD_TESTING)
     add_executable(note_platform_services_tests
         tests/platform/platform_services_tests.cpp)
     target_link_libraries(note_platform_services_tests PRIVATE note_app_core)
-    add_test(NAME note_platform_services_tests COMMAND note_platform_services_tests)
+    if(WIN32)
+        add_test(NAME note_platform_services_tests
+                 COMMAND note_platform_services_tests $<TARGET_FILE:note>)
+    else()
+        add_test(NAME note_platform_services_tests COMMAND note_platform_services_tests)
+    endif()
 
     add_executable(note_ui_renderer_tests
         tests/ui/editor_renderer_tests.cpp
