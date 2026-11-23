@@ -27,6 +27,7 @@ target_link_libraries(note_core PUBLIC Qt6::Core)
 
 add_library(note_app_core
     src/application/document_workflow.cpp
+    src/application/session_recovery.cpp
     src/commands/command_registry.cpp
     src/commands/keybinding_manager.cpp
     src/commands/shortcut_dispatcher.cpp
@@ -117,6 +118,11 @@ if(BUILD_TESTING)
     target_link_libraries(note_document_workflow_tests PRIVATE note_app_core)
     add_test(NAME note_document_workflow_tests COMMAND note_document_workflow_tests)
 
+    add_executable(note_session_recovery_tests
+        tests/application/session_recovery_tests.cpp)
+    target_link_libraries(note_session_recovery_tests PRIVATE note_app_core)
+    add_test(NAME note_session_recovery_tests COMMAND note_session_recovery_tests)
+
     add_executable(note_ui_smoke_tests
         tests/ui/main_window_smoke.cpp
         src/ui/document_preview.cpp
@@ -138,6 +144,29 @@ if(BUILD_TESTING)
     target_link_libraries(note_ui_smoke_tests PRIVATE note_app_core Qt6::Widgets)
     add_test(NAME note_ui_smoke_tests COMMAND note_ui_smoke_tests)
     set_tests_properties(note_ui_smoke_tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+    add_executable(note_session_lifecycle_tests
+        tests/ui/session_lifecycle_smoke.cpp
+        src/ui/document_preview.cpp
+        src/ui/document_preview.hpp
+        src/ui/editor_renderer.cpp
+        src/ui/editor_renderer.hpp
+        src/ui/editor_view.cpp
+        src/ui/editor_view.hpp
+        src/ui/main_window.cpp
+        src/ui/main_window.hpp
+        src/ui/command_palette.cpp
+        src/ui/command_palette.hpp
+        src/ui/search_panel.cpp
+        src/ui/search_panel.hpp
+        src/ui/settings_dialog.cpp
+        src/ui/settings_dialog.hpp
+    )
+    target_include_directories(note_session_lifecycle_tests PRIVATE src)
+    target_link_libraries(note_session_lifecycle_tests PRIVATE note_app_core Qt6::Widgets)
+    add_test(NAME note_session_lifecycle_tests COMMAND note_session_lifecycle_tests)
+    set_tests_properties(note_session_lifecycle_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
     add_executable(note_document_bench
         benchmarks/document_foundation/document_bench.cpp

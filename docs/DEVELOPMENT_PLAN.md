@@ -23,7 +23,8 @@ The application currently has partial implementation for the application shell, 
 - Production UTF-8 piece-table editing, document ownership, tab identity, workflow, native dialogs and chunked Qt file service behavior exist.
 - Project-owned viewport rendering, cursor/selection management, undo/redo, pairing, indentation and presentation settings are in progress.
 - Focused Windows Debug tests pass, but reference-device, cross-platform and real-display validation remain incomplete.
-- Session and recovery, customisation completion, command/input completion and search remain unfinished.
+- System 09 now has atomic session persistence, path/order/active/cursor restoration, unclean-run detection, separate dirty-buffer snapshots and explicit recovery choices integrated with Application Core. UI lifecycle, platform and durability validation remain.
+- Systems 06–08 have integrated implementation in progress; broader UI and runtime validation remain.
 
 Measured current-host performance and technical evidence remain in [`PERFORMANCE.md`](PERFORMANCE.md). Historical partial or complete evidence does not waive unresolved acceptance gates.
 

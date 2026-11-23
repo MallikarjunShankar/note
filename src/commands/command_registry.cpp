@@ -14,7 +14,8 @@ std::string lower(std::string value) {
 
 void CommandRegistry::registerCommand(Command command, Callback callback, Enabled enabled) {
     if (command.id.empty()) return;
-    entries_[command.id] = Entry{std::move(command), std::move(callback),
+    const auto id = command.id;
+    entries_[id] = Entry{std::move(command), std::move(callback),
                                  std::move(enabled), true};
 }
 

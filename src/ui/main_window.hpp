@@ -1,6 +1,7 @@
 #pragma once
 
 #include "application/document_workflow.hpp"
+#include "application/session_recovery.hpp"
 #include "commands/command_registry.hpp"
 #include "commands/keybinding_manager.hpp"
 #include "commands/shortcut_dispatcher.hpp"
@@ -11,6 +12,7 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <set>
 
 class QCloseEvent;
 class QDragEnterEvent;
@@ -33,7 +35,10 @@ class SettingsDialog;
 class MainWindow final : public QMainWindow {
     Q_OBJECT
 public:
-    explicit MainWindow(application::DocumentWorkflow& workflow, QWidget* parent = nullptr);
+    explicit MainWindow(application::DocumentWorkflow& workflow,
+                        application::SessionRecoveryService* session = nullptr,
+                        application::SessionState startupState = {},
+                        QWidget* parent = nullptr);
     ~MainWindow() override;
     // Called after model changes made outside the active editor.
     void refreshFromModel();
@@ -56,7 +61,8 @@ private:
     void saveActive();
     void saveActiveAs();
     void closeDocument(documents::DocumentId id);
-    bool resolveAllDocumentsForWindowClose();
+    bool resolveAllDocumentsForWindowClose(
+        application::SessionState* resolvedSessionState);
     void showError(const QString& message);
     void startReload(documents::DocumentId id, bool confirmDiscardLocalChanges);
     void showExternalFileChange(documents::DocumentId id, documents::ExternalFileState state);
@@ -67,6 +73,11 @@ private:
     void showSettings();
     void applyCustomisation();
     EditorView* activeEditorView();
+    [[nodiscard]] application::SessionState captureSessionState() const;
+    [[nodiscard]] std::vector<application::RecoveryDocument> captureRecoveryDocuments();
+    void restoreSessionDocuments();
+    void restoreSessionDocumentAt(std::size_t index);
+    void resolveStartupRecovery();
     void createOpenProgress(application::DocumentWorkflow::OpenRequestId id, const QString& label);
     void updateOpenProgress(application::DocumentWorkflow::OpenRequestId id, documents::OpenProgress progress);
     void finishOpenProgress(application::DocumentWorkflow::OpenRequestId id);
@@ -99,6 +110,12 @@ private:
     commands::ShortcutDispatcher shortcutDispatcher_;
     SearchPanel* searchPanel_{};
     std::map<std::string, QAction*> commandActions_;
+    application::SessionRecoveryService* sessionRecovery_{};
+    application::SessionState startupSession_;
+    std::map<documents::DocumentId, QString> recoveryKeys_;
+    std::set<QString> recoveryKeysHandledAtStartup_;
+    std::vector<documents::DocumentId> restoredDocumentIds_;
+    bool preserveRecoveryForNextStartup_{};
 };
 
 } // namespace note::ui

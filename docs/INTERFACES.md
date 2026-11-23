@@ -103,7 +103,7 @@ These are the small Phase 02 interfaces available under `src/`. Qt is confined t
 - `platform::FileMonitor` wraps Qt `QFileSystemWatcher`, monitoring existing open files and their parent directories, then rebuilding watch registrations after events or application activation. The parent-directory watch catches deletion, moves and atomic replacement; the workflow determines actual state by file inspection. Watcher registration can fail or events can be lost, so activation and pre-save inspection are fallback checks.
 - `platform::pathToQString` / `pathFromQString` centralize Windows wide-path and POSIX UTF-8 conversions. `platform::openInExternalApplication` and `openTerminalInDirectory` isolate OS launch behavior.
 - Closing a dirty document requires a caller-supplied Save/Discard/Cancel choice. Save As for an untitled document requires a path; empty paths represent cancellation. Save failures and open errors do not remove tabs or mark content saved.
-- The Qt Main Window owns dialog and prompt presentation, tab-to-view lifecycle, and editor presentation. File menu shortcuts use the same `QAction` connections; text input remains in `EditorView`. There is no command registry in the current foundation, so no parallel command system is introduced.
+- The Qt Main Window owns dialog and prompt presentation, tab-to-view lifecycle, and editor presentation. Menus and keyboard shortcuts use the shared command registry, keybinding manager and Qt action adapters; text input remains in `EditorView`.
 - `ui::DocumentPreview` shows at most 16 KiB from the active document in a read-only widget. It is a temporary UI projection, never a source of text edits or document persistence.
 
 ## File service (`documents::FileService`)
@@ -111,6 +111,14 @@ These are the small Phase 02 interfaces available under `src/`. Qt is confined t
 - `open(path)` returns an `OpenFileResult` with a buffer and metadata on success, otherwise a diagnostic string. Its `OpenOptions` overload reads fixed-size chunks (default 256 KiB), tracks decoder and line-ending state across boundaries, reports bytes read, checks cancellation between chunks, and verifies file size and modification time after reading. Detection accepts UTF-8 (with or without BOM) and BOM-marked UTF-16LE/BE. Invalid UTF-8/UTF-16 and UTF-32 are rejected; legacy encodings are never guessed.
 - `save(document)` requires an associated path; `saveAs(document, path)` writes to a new target. Both return `FileOperationResult` and update document persistence state only after a successful commit.
 - Saves use `QSaveFile` with direct-write fallback disabled. Bytes are written to a temporary file in the target directory and the target is replaced only by `commit()`. Read/write/commit errors are returned to the caller.
+
+## Session and recovery (`application::SessionRecoveryService`)
+
+- Application Core constructs the service with the application data directory and calls `start()` before creating the Main Window. `SessionState` contains ordered document paths, stable recovery keys, byte-coordinate cursor offsets, the active tab index and whether the previous shutdown was clean.
+- The Main Window supplies session and modified-document providers. `scheduleSessionSave()` and `scheduleRecoverySnapshot()` reset one shared debounce timer; a single periodic timer also persists both categories. Clean documents and unchanged buffer revisions do not produce recovery writes.
+- Session metadata is versioned JSON written through `QSaveFile`. Recovery records are separate versioned binary files containing source-path context, canonical UTF-8 bytes, line-ending tags and a SHA-256 integrity digest. `TextBuffer::visitSegments` streams document content during snapshot writes; no complete text snapshot is assembled.
+- `recoveries()` rejects malformed, truncated, invalid-UTF-8 or checksum-mismatched records. `removeRecovery(key)` prevents the same snapshot being offered repeatedly. Recovering content creates a new untitled document; it never writes to the original path. `finishNormally(state)` removes snapshots only after successful normal lifecycle resolution, while the explicit Later choice retains recovery data and an unclean marker for the next launch.
+- Missing/inaccessible session paths are reported and skipped during ordinary workflow restoration. File contents continue to load through `DocumentWorkflow`; the recovery service does not bypass Document Management.
 
 ## Dependencies and thread contract
 

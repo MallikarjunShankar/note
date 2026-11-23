@@ -43,6 +43,7 @@ public:
     void selectRange(std::size_t begin, std::size_t end);
     void setSearchMatches(const std::vector<std::pair<std::size_t, std::size_t>>& matches);
     void setBracketConfiguration(editor::BracketConfiguration configuration);
+    void restoreCursorPosition(std::size_t offset);
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;

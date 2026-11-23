@@ -109,6 +109,14 @@ void EditorView::setBracketConfiguration(editor::BracketConfiguration configurat
     brackets_.setConfiguration(configuration);
 }
 
+void EditorView::restoreCursorPosition(std::size_t offset) {
+    cursors_.setPrimaryCursor(offset);
+    selections_.clearSelections();
+    selections_.addSelection(cursors_.primaryOffset(), cursors_.primaryOffset());
+    renderer_->ensureCursorVisible(cursors_.primaryOffset());
+    renderer_->viewport()->update();
+}
+
 bool EditorView::eventFilter(QObject* watched, QEvent* event) {
     if (event->type() == QEvent::KeyPress)
         return handleKeyPress(static_cast<QKeyEvent*>(event));

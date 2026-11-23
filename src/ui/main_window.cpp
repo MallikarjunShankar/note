@@ -37,6 +37,8 @@
 #include <QToolBar>
 #include <QPalette>
 #include <QFontMetrics>
+#include <QTimer>
+#include <QUuid>
 #include <QUrl>
 
 #include <cstdint>
@@ -55,7 +57,10 @@ QString fromUtf8(const std::string& value) {
 
 } // namespace
 
-MainWindow::MainWindow(application::DocumentWorkflow& workflow, QWidget* parent)
+MainWindow::MainWindow(application::DocumentWorkflow& workflow,
+                       application::SessionRecoveryService* session,
+                       application::SessionState startupState,
+                       QWidget* parent)
     : QMainWindow(parent), workflow_(workflow),
       settingsManager_(QDir(QStandardPaths::writableLocation(
                              QStandardPaths::AppDataLocation)).filePath(QStringLiteral("settings.ini"))),
@@ -63,7 +68,8 @@ MainWindow::MainWindow(application::DocumentWorkflow& workflow, QWidget* parent)
                              QStandardPaths::AppDataLocation)).filePath(QStringLiteral("themes")), this),
       keybindingManager_(QDir(QStandardPaths::writableLocation(
                               QStandardPaths::AppDataLocation)).filePath(QStringLiteral("keybindings.ini"))),
-      shortcutDispatcher_(commandRegistry_, keybindingManager_) {
+      shortcutDispatcher_(commandRegistry_, keybindingManager_),
+      sessionRecovery_(session), startupSession_(std::move(startupState)) {
     setAcceptDrops(true);
     setWindowTitle(tr("Note"));
     resize(1000, 700);
@@ -104,6 +110,19 @@ MainWindow::MainWindow(application::DocumentWorkflow& workflow, QWidget* parent)
                                                     documents::ExternalFileState state) {
         showExternalFileChange(id, state);
     });
+    if (sessionRecovery_) {
+        connect(sessionRecovery_, &application::SessionRecoveryService::persistenceError,
+                this, [this](const QString& message) {
+                    status_->setText(tr("Recovery warning: %1").arg(message));
+                });
+        sessionRecovery_->setProviders(
+            [this] { return captureSessionState(); },
+            [this] { return captureRecoveryDocuments(); });
+        QTimer::singleShot(0, this, [this] {
+            resolveStartupRecovery();
+            restoreSessionDocuments();
+        });
+    }
 
     connect(tabs_, &QTabBar::currentChanged, this, [this](int index) {
         if (index >= 0) {
@@ -111,6 +130,7 @@ MainWindow::MainWindow(application::DocumentWorkflow& workflow, QWidget* parent)
             (void)workflow_.activate(static_cast<documents::DocumentId>(value));
         }
         refreshPresentation();
+        if (sessionRecovery_) sessionRecovery_->scheduleSessionSave();
     });
     connect(tabs_, &QTabBar::tabCloseRequested, this, [this](int index) {
         if (index < 0) return;
@@ -120,7 +140,10 @@ MainWindow::MainWindow(application::DocumentWorkflow& workflow, QWidget* parent)
     refresh();
 }
 
-MainWindow::~MainWindow() { workflow_.setExternalFileChangeCallback({}); }
+MainWindow::~MainWindow() {
+    workflow_.setExternalFileChangeCallback({});
+    if (sessionRecovery_) sessionRecovery_->clearProviders();
+}
 
 void MainWindow::createActions() {
     keybindingManager_.setDefault("file.new", QKeySequence::New);
@@ -151,6 +174,7 @@ void MainWindow::createActions() {
 
     auto* newAction = fileMenu->addAction(tr("&New"));
     registerAction(newAction, "file.new", "File", "Create a new document");
+    newAction->setObjectName(QStringLiteral("newDocumentAction"));
     connect(newAction, &QAction::triggered, this, [this] {
         (void)workflow_.createNew();
         refresh();
@@ -158,23 +182,27 @@ void MainWindow::createActions() {
 
     auto* openAction = fileMenu->addAction(tr("&Open…"));
     registerAction(openAction, "file.open", "File", "Open a file");
+    openAction->setObjectName(QStringLiteral("openDocumentAction"));
     connect(openAction, &QAction::triggered, this, [this] { openFile(); });
 
     fileMenu->addSeparator();
     saveAction_ = fileMenu->addAction(tr("&Save"));
     registerAction(saveAction_, "file.save", "File", "Save the active document",
                    [this] { return workflow_.activeDocument() != nullptr; });
+    saveAction_->setObjectName(QStringLiteral("saveDocumentAction"));
     connect(saveAction_, &QAction::triggered, this, [this] { saveActive(); });
 
     saveAsAction_ = fileMenu->addAction(tr("Save &As…"));
     registerAction(saveAsAction_, "file.saveAs", "File", "Save the active document as",
                    [this] { return workflow_.activeDocument() != nullptr; });
+    saveAsAction_->setObjectName(QStringLiteral("saveAsDocumentAction"));
     connect(saveAsAction_, &QAction::triggered, this, [this] { saveActiveAs(); });
 
     fileMenu->addSeparator();
     closeAction_ = fileMenu->addAction(tr("&Close Tab"));
     registerAction(closeAction_, "file.close", "File", "Close the active document",
                    [this] { return workflow_.activeDocument() != nullptr; });
+    closeAction_->setObjectName(QStringLiteral("closeDocumentAction"));
     connect(closeAction_, &QAction::triggered, this, [this] {
         if (const auto* active = workflow_.activeDocument()) closeDocument(active->id());
     });
@@ -318,6 +346,10 @@ void MainWindow::refresh() {
     if (activeIndex >= 0) tabs_->setCurrentIndex(activeIndex);
     tabs_->blockSignals(false);
     refreshPresentation();
+    if (sessionRecovery_) {
+        sessionRecovery_->scheduleSessionSave();
+        sessionRecovery_->scheduleRecoverySnapshot();
+    }
 }
 
 EditorView* MainWindow::activeEditorView() {
@@ -325,6 +357,172 @@ EditorView* MainWindow::activeEditorView() {
     if (!document) return nullptr;
     const auto found = editorViews_.find(document->id());
     return found == editorViews_.end() ? nullptr : found->second.view;
+}
+
+application::SessionState MainWindow::captureSessionState() const {
+    application::SessionState state;
+    for (const auto id : workflow_.tabs().order()) {
+        const auto* document = workflow_.findDocument(id);
+        if (!document) continue;
+        const auto key = recoveryKeys_.find(id);
+        const auto view = editorViews_.find(id);
+        state.documents.push_back({
+            document->metadata().path
+                ? platform::pathToQString(*document->metadata().path)
+                : QString{},
+            key == recoveryKeys_.end() ? QString{} : key->second,
+            view == editorViews_.end() ? 0
+                : static_cast<std::uint64_t>(view->second.view->cursors().primaryOffset())});
+        if (workflow_.activeDocumentId() == id)
+            state.activeIndex = static_cast<int>(state.documents.size() - 1);
+    }
+    return state;
+}
+
+std::vector<application::RecoveryDocument>
+MainWindow::captureRecoveryDocuments() {
+    std::vector<application::RecoveryDocument> result;
+    for (const auto id : workflow_.tabs().order()) {
+        const auto* document = workflow_.findDocument(id);
+        if (!document || !document->modified()) continue;
+        const auto key = recoveryKeys_.find(id);
+        if (key == recoveryKeys_.end()) continue;
+        result.push_back({
+            key->second,
+            document->metadata().path
+                ? platform::pathToQString(*document->metadata().path)
+                : QString{},
+            &document->buffer(),
+            document->buffer().revision()});
+    }
+    return result;
+}
+
+void MainWindow::resolveStartupRecovery() {
+    if (!sessionRecovery_) return;
+    if (!startupSession_.error.isEmpty())
+        status_->setText(startupSession_.error);
+    if (startupSession_.previousRunClean) return;
+    const auto snapshots = sessionRecovery_->recoveries();
+    if (snapshots.empty()) return;
+    QStringList details;
+    bool hasValid = false;
+    for (const auto& snapshot : snapshots) {
+        if (snapshot.contents) {
+            hasValid = true;
+            recoveryKeysHandledAtStartup_.insert(snapshot.key);
+            details.push_back(snapshot.sourcePath.isEmpty()
+                ? tr("Unsaved document") : snapshot.sourcePath);
+        } else {
+            details.push_back(tr("Unavailable recovery data: %1")
+                                  .arg(snapshot.error));
+        }
+    }
+    QMessageBox prompt(QMessageBox::Warning, tr("Recover Previous Session"),
+        tr("Note did not shut down normally. Recovery copies are stored separately and will not overwrite original files."),
+        QMessageBox::NoButton, this);
+    prompt.setInformativeText(details.join(QLatin1Char('\n')));
+    auto* recover = hasValid
+        ? prompt.addButton(tr("Recover as Untitled"), QMessageBox::AcceptRole)
+        : nullptr;
+    auto* discard = prompt.addButton(tr("Discard Recovery Data"), QMessageBox::DestructiveRole);
+    auto* later = prompt.addButton(tr("Later"), QMessageBox::RejectRole);
+    prompt.exec();
+    if (prompt.clickedButton() == recover) {
+        for (const auto& snapshot : snapshots) {
+            if (!snapshot.contents) continue;
+            auto& document = workflow_.createNew();
+            const auto key = snapshot.key;
+            recoveryKeys_[document.id()] = key;
+            document.buffer().replace(0, 0, *snapshot.contents);
+            refresh();
+            if (const auto view = editorViews_.find(document.id());
+                view != editorViews_.end()) {
+                for (const auto& saved : startupSession_.documents) {
+                    if (saved.recoveryKey == key) {
+                        view->second.view->restoreCursorPosition(
+                            static_cast<std::size_t>(saved.cursorOffset));
+                        break;
+                    }
+                }
+            }
+        }
+        sessionRecovery_->flushRecoverySnapshotsNow();
+    } else if (prompt.clickedButton() == discard) {
+        for (const auto& snapshot : snapshots)
+            sessionRecovery_->removeRecovery(snapshot.key);
+        recoveryKeysHandledAtStartup_.clear();
+    } else if (prompt.clickedButton() == later) {
+        preserveRecoveryForNextStartup_ = true;
+    }
+}
+
+void MainWindow::restoreSessionDocuments() {
+    if (!sessionRecovery_ || startupSession_.documents.empty()) return;
+    restoredDocumentIds_.assign(startupSession_.documents.size(), 0);
+    restoreSessionDocumentAt(0);
+}
+
+void MainWindow::restoreSessionDocumentAt(std::size_t index) {
+    if (index >= startupSession_.documents.size()) {
+        if (startupSession_.activeIndex >= 0 &&
+            startupSession_.activeIndex < static_cast<int>(restoredDocumentIds_.size())) {
+            auto active = restoredDocumentIds_[static_cast<std::size_t>(startupSession_.activeIndex)];
+            if (active == 0) {
+                const auto found = std::find_if(
+                    restoredDocumentIds_.begin(), restoredDocumentIds_.end(),
+                    [](documents::DocumentId id) { return id != 0; });
+                if (found != restoredDocumentIds_.end()) active = *found;
+            }
+            if (active != 0) {
+                (void)workflow_.activate(active);
+                refreshPresentation();
+            }
+        }
+        return;
+    }
+    const auto saved = startupSession_.documents[index];
+    if (saved.path.isEmpty()) {
+        if (recoveryKeysHandledAtStartup_.contains(saved.recoveryKey)) {
+            restoreSessionDocumentAt(index + 1);
+            return;
+        }
+        auto& document = workflow_.createNew();
+        recoveryKeys_[document.id()] = saved.recoveryKey;
+        restoredDocumentIds_[index] = document.id();
+        refresh();
+        restoreSessionDocumentAt(index + 1);
+        return;
+    }
+    const auto path = platform::pathFromQString(saved.path);
+    const QFileInfo fileInfo(platform::pathToQString(path));
+    if (!fileInfo.exists() || !fileInfo.isFile() || !fileInfo.isReadable()) {
+        status_->setText(tr("Could not restore %1; the file is missing or inaccessible.")
+                             .arg(saved.path));
+        restoreSessionDocumentAt(index + 1);
+        return;
+    }
+    const auto request = workflow_.openAsync(path, {}, [this, index, saved](auto,
+            application::WorkflowResult result) {
+        if (result && result.documentId) {
+            recoveryKeys_[*result.documentId] = saved.recoveryKey;
+            restoredDocumentIds_[index] = *result.documentId;
+            refresh();
+            const auto view = editorViews_.find(*result.documentId);
+            if (view != editorViews_.end())
+                view->second.view->restoreCursorPosition(
+                    static_cast<std::size_t>(saved.cursorOffset));
+        } else {
+            status_->setText(tr("Could not restore %1: %2")
+                                 .arg(saved.path, fromUtf8(result.error)));
+        }
+        restoreSessionDocumentAt(index + 1);
+    });
+    if (!request) {
+        status_->setText(tr("Could not restore %1.")
+                             .arg(saved.path));
+        restoreSessionDocumentAt(index + 1);
+    }
 }
 
 void MainWindow::showFind() {
@@ -465,6 +663,9 @@ void MainWindow::syncEditorViews() {
         auto* document = workflow_.findDocument(id);
         if (!document) continue;
         live.insert(id);
+        if (!recoveryKeys_.contains(id))
+            recoveryKeys_.emplace(
+                id, QUuid::createUuid().toString(QUuid::WithoutBraces));
         auto found = editorViews_.find(id);
         if (found != editorViews_.end() &&
             found->second.contentGeneration == document->contentGeneration())
@@ -488,6 +689,7 @@ void MainWindow::syncEditorViews() {
         }
         editorStack_->removeWidget(it->second.view);
         delete it->second.view;
+        recoveryKeys_.erase(it->first);
         it = editorViews_.erase(it);
     }
     applyCustomisation();
@@ -503,6 +705,10 @@ void MainWindow::refreshAfterEdit(documents::DocumentId id) {
         tabs_->setTabText(static_cast<int>(*index), label);
     }
     refreshPresentation();
+    if (sessionRecovery_) {
+        sessionRecovery_->scheduleSessionSave();
+        sessionRecovery_->scheduleRecoverySnapshot();
+    }
 }
 
 void MainWindow::openFile() {
@@ -584,6 +790,10 @@ void MainWindow::saveActive() {
     if (result.status == application::OperationStatus::failed) {
         showError(tr("Could not save the file: %1").arg(fromUtf8(result.error)));
     } else if (result) {
+        if (sessionRecovery_) {
+            const auto key = recoveryKeys_.find(id);
+            if (key != recoveryKeys_.end()) sessionRecovery_->removeRecovery(key->second);
+        }
         refresh();
     }
 }
@@ -625,6 +835,10 @@ void MainWindow::saveDocumentAs(documents::DocumentId id) {
     if (result.status == application::OperationStatus::failed) {
         showError(tr("Could not save the file: %1").arg(fromUtf8(result.error)));
     } else if (result) {
+        if (sessionRecovery_) {
+            const auto key = recoveryKeys_.find(id);
+            if (key != recoveryKeys_.end()) sessionRecovery_->removeRecovery(key->second);
+        }
         refresh();
     }
 }
@@ -662,16 +876,20 @@ void MainWindow::closeDocument(documents::DocumentId id) {
             if (!savePath) return;
         }
     }
+    const auto recoveryKey = recoveryKeys_.find(id);
     const auto result = workflow_.close(id, choice, std::move(savePath));
     if (result.status == application::OperationStatus::conflict) {
         showSaveConflict(id, fromUtf8(result.error));
     } else if (result.status == application::OperationStatus::failed) {
         showError(tr("Could not close the document: %1").arg(fromUtf8(result.error)));
     }
+    if (result && sessionRecovery_ && recoveryKey != recoveryKeys_.end())
+        sessionRecovery_->removeRecovery(recoveryKey->second);
     refresh();
 }
 
-bool MainWindow::resolveAllDocumentsForWindowClose() {
+bool MainWindow::resolveAllDocumentsForWindowClose(
+    application::SessionState* resolvedSessionState) {
     struct Decision { documents::DocumentId id; application::CloseChoice choice; };
     std::vector<Decision> decisions;
     decisions.reserve(workflow_.tabs().size());
@@ -713,6 +931,9 @@ bool MainWindow::resolveAllDocumentsForWindowClose() {
         }
         decisions.push_back({id, application::CloseChoice::cancel});
     }
+
+    if (resolvedSessionState)
+        *resolvedSessionState = captureSessionState();
 
     for (const auto& decision : decisions) {
         const auto result = workflow_.close(decision.id, decision.choice);
@@ -860,7 +1081,16 @@ void MainWindow::contextMenuEvent(QContextMenuEvent* event) {
 }
 
 void MainWindow::closeEvent(QCloseEvent* event) {
-    if (closingResolved_ || resolveAllDocumentsForWindowClose()) {
+    auto sessionState = sessionRecovery_
+        ? captureSessionState() : application::SessionState{};
+    if (closingResolved_ ||
+        resolveAllDocumentsForWindowClose(sessionRecovery_ ? &sessionState : nullptr)) {
+        if (sessionRecovery_) {
+            sessionRecovery_->finishNormally(sessionState,
+                                             preserveRecoveryForNextStartup_);
+            if (!sessionRecovery_->errorString().isEmpty())
+                showError(sessionRecovery_->errorString());
+        }
         workflow_.shutdown();
         closingResolved_ = true;
         event->accept();
