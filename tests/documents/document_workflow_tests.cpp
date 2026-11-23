@@ -2,9 +2,11 @@
 
 #include <QFile>
 #include <QCoreApplication>
+#include <QDir>
 #include <QElapsedTimer>
 #include <QEventLoop>
 #include <QTemporaryDir>
+#include <QThread>
 #include <QTimer>
 
 #include <filesystem>
@@ -17,6 +19,21 @@ namespace {
 void require(bool condition, const char* message) {
     if (!condition) throw std::runtime_error(message);
 }
+
+// Background external-file inspections can still hold a file open on Windows after the
+// workflow is destroyed, so plain QTemporaryDir removal fails silently. Retry until the
+// handle closes; runs during exception unwinding too, so failed tests also clean up.
+class TestDirectory : public QTemporaryDir {
+public:
+    ~TestDirectory() {
+        if (!isValid()) return;
+        QElapsedTimer timer;
+        timer.start();
+        while (!QDir(path()).removeRecursively() && timer.elapsed() < 5000) QThread::msleep(10);
+        if (QDir(path()).exists())
+            std::cerr << "warning: could not remove " << path().toStdString() << std::endl;
+    }
+};
 
 std::filesystem::path pathFromQString(const QString& value) {
 #if defined(_WIN32)
@@ -69,7 +86,7 @@ QByteArray readFile(const std::filesystem::path& path) {
 
 void testCreateOpenSwitchAndDuplicate() {
     using namespace note::application;
-    QTemporaryDir temporary;
+    TestDirectory temporary;
     require(temporary.isValid(), "temporary directory unavailable");
     const auto filePath = pathFromQString(temporary.filePath(QStringLiteral("source.txt")));
     writeFile(filePath, QByteArray("opened text", 11));
@@ -111,7 +128,7 @@ void testCreateOpenSwitchAndDuplicate() {
 
 void testSaveAsCollisionAndCloseChoices() {
     using namespace note::application;
-    QTemporaryDir temporary;
+    TestDirectory temporary;
     require(temporary.isValid(), "temporary directory unavailable");
     const auto firstPath = pathFromQString(temporary.filePath(QStringLiteral("first.txt")));
     const auto secondPath = pathFromQString(temporary.filePath(QStringLiteral("second.txt")));
@@ -172,7 +189,7 @@ void testSaveAsCollisionAndCloseChoices() {
 
 void testSaveFailureOnCloseAndUntitledSave() {
     using namespace note::application;
-    QTemporaryDir temporary;
+    TestDirectory temporary;
     require(temporary.isValid(), "temporary directory unavailable");
     const auto path = pathFromQString(temporary.filePath(QStringLiteral("replace-me.txt")));
     writeFile(path, QByteArray("original", 8));
@@ -210,7 +227,7 @@ void testSaveFailureOnCloseAndUntitledSave() {
 
 void testAsynchronousProgressiveOpen() {
     using namespace note::application;
-    QTemporaryDir temporary;
+    TestDirectory temporary;
     require(temporary.isValid(), "temporary directory unavailable");
     const auto path = pathFromQString(temporary.filePath(QStringLiteral("large.txt")));
     writeFile(path, QByteArray(8 * 1024 * 1024, 'x'));
@@ -270,7 +287,7 @@ void testAsynchronousProgressiveOpen() {
 void testExternalModificationConflictAndReload() {
     using namespace note::application;
     using note::documents::ExternalFileState;
-    QTemporaryDir temporary;
+    TestDirectory temporary;
     require(temporary.isValid(), "temporary directory unavailable");
     const auto path =
         pathFromQString(temporary.filePath(QStringLiteral("external.txt")));
