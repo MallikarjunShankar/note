@@ -40,6 +40,10 @@ public:
     [[nodiscard]] EditBatch replaceSelections(
         std::string_view utf8Text, LineEnding bareLineEnding = LineEnding::lf);
     [[nodiscard]] EditBatch deleteSelections();
+    [[nodiscard]] EditBatch replaceRange(
+        std::size_t offset, std::size_t length,
+        std::string_view utf8Text,
+        LineEnding bareLineEnding = LineEnding::lf);
 
 private:
     struct PendingEdit {

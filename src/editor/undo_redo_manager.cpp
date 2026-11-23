@@ -79,6 +79,14 @@ EditBatch UndoRedoManager::deleteSelections() {
     return finish(std::move(batch), OperationKind::other, before);
 }
 
+EditBatch UndoRedoManager::replaceRange(std::size_t offset, std::size_t length,
+                                        std::string_view utf8Text,
+                                        LineEnding bareLineEnding) {
+    const auto before = captureState();
+    auto batch = editing_.replaceRange(offset, length, utf8Text, bareLineEnding);
+    return finish(std::move(batch), OperationKind::other, before);
+}
+
 void UndoRedoManager::beginTransaction() {
     if (openTransaction_) throw std::logic_error("undo transaction already open");
     openTransaction_ = Transaction{};

@@ -43,6 +43,7 @@ struct EditorRenderConfiguration {
     QColor indentationGuide{QStringLiteral("#39414d")};
     QColor whitespace{QStringLiteral("#687382")};
     QColor matchingOccurrence{QStringLiteral("#3a4655")};
+    QColor searchMatch{QStringLiteral("#6b5523")};
 };
 
 struct VisibleLineRange {
@@ -75,6 +76,7 @@ public:
     void ensureCursorVisible(std::size_t offset);
     void refreshFromModel();
     void setMatchingBrackets(std::optional<editor::BracketPair> pair);
+    void setSearchMatches(const QVector<QPair<std::size_t, std::size_t>>& matches);
 
     [[nodiscard]] QRectF cursorGeometry(std::size_t cursorIndex) const;
     [[nodiscard]] QVector<QRectF> selectionGeometry(std::size_t selectionIndex) const;
@@ -141,6 +143,7 @@ private:
     std::size_t lastPaintedLines_{};
     std::size_t lastPaintedVisualRows_{};
     std::optional<editor::BracketPair> matchingBrackets_;
+    QVector<QPair<std::size_t, std::size_t>> searchMatches_;
 };
 
 } // namespace note::ui

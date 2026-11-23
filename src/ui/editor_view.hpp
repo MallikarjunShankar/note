@@ -12,6 +12,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <utility>
+#include <vector>
 
 class QEvent;
 class QMouseEvent;
@@ -32,6 +34,15 @@ public:
     [[nodiscard]] EditorRenderer* renderer() const noexcept;
     void setDocumentChangedCallback(std::function<void()> callback);
     void refreshFromModel();
+    [[nodiscard]] bool undo();
+    [[nodiscard]] bool redo();
+    void beginUndoTransaction();
+    void endUndoTransaction();
+    void replaceRange(std::size_t offset, std::size_t length,
+                      std::string_view utf8Text);
+    void selectRange(std::size_t begin, std::size_t end);
+    void setSearchMatches(const std::vector<std::pair<std::size_t, std::size_t>>& matches);
+    void setBracketConfiguration(editor::BracketConfiguration configuration);
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;

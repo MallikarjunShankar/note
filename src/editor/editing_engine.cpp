@@ -130,6 +130,15 @@ EditBatch EditingEngine::deleteSelections() {
     return result;
 }
 
+EditBatch EditingEngine::replaceRange(std::size_t offset, std::size_t length,
+                                      std::string_view utf8Text,
+                                      LineEnding bareLineEnding) {
+    validateInsertedText(utf8Text);
+    std::vector<PendingEdit> edits;
+    edits.push_back({offset, length, std::string(utf8Text)});
+    return apply(std::move(edits), bareLineEnding, false);
+}
+
 std::size_t EditingEngine::previousBoundary(std::size_t offset) const {
     auto result = offset - 1;
     while (result > 0 && !buffer_.isScalarBoundary(result)) --result;

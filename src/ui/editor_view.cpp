@@ -62,6 +62,53 @@ void EditorView::refreshFromModel() {
     updateMatchingBrackets();
 }
 
+bool EditorView::undo() {
+    if (!history_.undo()) return false;
+    afterEdit();
+    return true;
+}
+
+bool EditorView::redo() {
+    if (!history_.redo()) return false;
+    afterEdit();
+    return true;
+}
+
+void EditorView::beginUndoTransaction() {
+    history_.beginTransaction();
+}
+
+void EditorView::endUndoTransaction() {
+    history_.endTransaction();
+}
+
+void EditorView::replaceRange(std::size_t offset, std::size_t length,
+                              std::string_view utf8Text) {
+    (void)history_.replaceRange(offset, length, utf8Text, preferredLineEnding_);
+    afterEdit();
+}
+
+void EditorView::selectRange(std::size_t begin, std::size_t end) {
+    ensureSelectionAlignment();
+    setPrimarySelection(begin, end);
+    cursors_.setPrimaryCursor(end);
+    renderer_->ensureCursorVisible(end);
+    renderer_->viewport()->update();
+}
+
+void EditorView::setSearchMatches(
+    const std::vector<std::pair<std::size_t, std::size_t>>& matches) {
+    QVector<QPair<std::size_t, std::size_t>> ranges;
+    ranges.reserve(static_cast<qsizetype>(matches.size()));
+    for (const auto& match : matches)
+        ranges.push_back({match.first, match.second});
+    renderer_->setSearchMatches(ranges);
+}
+
+void EditorView::setBracketConfiguration(editor::BracketConfiguration configuration) {
+    brackets_.setConfiguration(configuration);
+}
+
 bool EditorView::eventFilter(QObject* watched, QEvent* event) {
     if (event->type() == QEvent::KeyPress)
         return handleKeyPress(static_cast<QKeyEvent*>(event));

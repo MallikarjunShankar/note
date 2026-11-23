@@ -116,6 +116,12 @@ void EditorRenderer::setMatchingBrackets(
     invalidateViewport();
 }
 
+void EditorRenderer::setSearchMatches(
+    const QVector<QPair<std::size_t, std::size_t>>& matches) {
+    searchMatches_ = matches;
+    invalidateViewport();
+}
+
 std::size_t EditorRenderer::offsetAtPosition(const QPointF& position) const {
     const auto lineCount = buffer_.lineCount();
     auto targetRow = static_cast<std::size_t>(
@@ -693,6 +699,25 @@ void EditorRenderer::paintEvent(QPaintEvent*) {
                        std::max<qreal>(0, viewport()->width() - gutter),
                        lineHeight),
                 Qt::IntersectClip);
+
+            if (!searchMatches_.isEmpty()) {
+                const auto rowBegin = range.begin + row.byteBegin;
+                const auto rowEnd = range.begin + row.byteEnd;
+                for (const auto& match : searchMatches_) {
+                    const auto begin = std::max(match.first, rowBegin);
+                    const auto end = std::min(match.second, rowEnd);
+                    if (begin >= end) continue;
+                    const auto xStart = xForByte(
+                        layout, range.begin, begin, rowIndex);
+                    const auto xEnd = xForByte(
+                        layout, range.begin, end, rowIndex);
+                    painter.fillRect(QRectF(
+                                         originX + xStart, y,
+                                         std::max<qreal>(1, xEnd - xStart),
+                                         lineHeight),
+                                     configuration_.searchMatch);
+                }
+            }
 
             if (configuration_.matchingOccurrences && !occurrenceText.empty()) {
                 const auto contextBytes = occurrenceText.size() - 1;
