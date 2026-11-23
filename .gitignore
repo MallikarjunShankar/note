@@ -9,6 +9,12 @@ cmake_install.cmake
 CTestTestfile.cmake
 Makefile
 
+# Release packages (scripts/release.ps1 writes outside the repo by default)
+/dist/
+/note-release/
+*.zip
+*.zip.sha256
+
 # Compiled outputs
 *.o
 *.obj

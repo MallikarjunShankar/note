@@ -1,0 +1,39 @@
+# Note @NOTE_VERSION@ release notes
+
+Release date: not set. This is a release candidate built for testing.
+
+Note is a lightweight, file-oriented text editor for Windows.
+
+## Install
+
+1. Check the download against its checksum:
+   `Get-FileHash Note-@NOTE_VERSION@-windows-x64.zip -Algorithm SHA256`
+   The hash must match `Note-@NOTE_VERSION@-windows-x64.zip.sha256`.
+2. Unzip anywhere and run `note.exe`. No installer or extra runtime is needed.
+
+Settings, themes, session and recovery data are stored per user in `%APPDATA%\Note`.
+
+## Included
+
+- Plain-text editing with multiple tabs and cursors, undo/redo, smart indentation and bracket/quote pairing.
+- Find and replace with case, whole-word and regular-expression options.
+- Themes and a theme editor, typography, layout, editing preferences and configurable shortcuts.
+- Command palette, menus, context menus and keyboard navigation.
+- Encoding and line-ending preservation, atomic saves and external-change detection.
+- Session restore and crash recovery of unsaved text.
+- Open the current file in another application, or a terminal in its folder.
+
+Syntax highlighting and language detection are not part of this release.
+
+## Known limitations
+
+- Tested only on Windows 11 (x64). Windows 10 is untested.
+- Typing and opening large files miss the provisional performance targets on the 4 GB test laptop; see `docs/PERFORMANCE.md` in the source.
+- Large files are shown only after they are fully loaded.
+- The editor text is not exposed to screen readers.
+- If Note is killed while saving, a temporary file such as `name.txt.AbCdEf` may remain beside the original. The original file stays complete.
+- Not yet checked by hand on a real display: native dialogs, drag and drop from Explorer, and external app or terminal launches.
+
+## Licences
+
+Note is released under the MIT License (`LICENSE.txt`). Bundled Qt and toolchain libraries keep their own licences; see `THIRD-PARTY-NOTICES.txt` and the `licenses` folder.

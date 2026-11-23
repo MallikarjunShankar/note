@@ -1,5 +1,13 @@
 ﻿cmake_minimum_required(VERSION 3.24)
-project(Note VERSION 0.1.0 LANGUAGES CXX)
+
+# VERSION is the single source of the release version (SemVer, e.g. 1.0.0-rc.1).
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" NOTE_VERSION LIMIT_COUNT 1)
+if(NOT NOTE_VERSION MATCHES "^([0-9]+)\\.([0-9]+)\\.([0-9]+)(-[0-9A-Za-z.]+)?$")
+    message(FATAL_ERROR "VERSION must hold a version such as 1.0.0 or 1.0.0-rc.1, not '${NOTE_VERSION}'")
+endif()
+set(NOTE_VERSION_NUMERIC "${CMAKE_MATCH_1}.${CMAKE_MATCH_2}.${CMAKE_MATCH_3}")
+set(NOTE_VERSION_PRERELEASE "${CMAKE_MATCH_4}")
+project(Note VERSION ${NOTE_VERSION_NUMERIC} LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -61,6 +69,32 @@ qt_add_executable(note
 target_link_libraries(note PRIVATE note_app_core Qt6::Widgets)
 # A GUI-subsystem program: no console window opens beside Note on Windows.
 set_target_properties(note PROPERTIES WIN32_EXECUTABLE TRUE)
+target_compile_definitions(note PRIVATE NOTE_VERSION="${NOTE_VERSION}")
+configure_file(packaging/RELEASE_NOTES.md.in RELEASE_NOTES.md @ONLY)
+if(WIN32)
+    enable_language(RC)
+    if(NOTE_VERSION_PRERELEASE)
+        set(NOTE_RC_FILEFLAGS "VS_FF_PRERELEASE")
+    else()
+        set(NOTE_RC_FILEFLAGS "0x0L")
+    endif()
+    configure_file(packaging/note.rc.in note.rc @ONLY)
+    target_sources(note PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/note.rc")
+endif()
+
+# `cmake --install` produces a self-contained folder: note.exe, notes and,
+# on Windows, Qt plus every toolchain DLL it loads (cmake/deploy_windows.cmake).
+install(TARGETS note RUNTIME DESTINATION .)
+install(FILES LICENSE DESTINATION . RENAME LICENSE.txt)
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/RELEASE_NOTES.md" DESTINATION .)
+if(WIN32)
+    get_filename_component(NOTE_TOOLCHAIN_BIN "${CMAKE_CXX_COMPILER}" DIRECTORY)
+    find_program(NOTE_WINDEPLOYQT NAMES windeployqt6 windeployqt
+                 HINTS "${NOTE_TOOLCHAIN_BIN}" REQUIRED)
+    install(CODE "set(NOTE_WINDEPLOYQT \"${NOTE_WINDEPLOYQT}\")
+                  set(NOTE_TOOLCHAIN_BIN \"${NOTE_TOOLCHAIN_BIN}\")")
+    install(SCRIPT cmake/deploy_windows.cmake)
+endif()
 
 include(CTest)
 if(BUILD_TESTING)
