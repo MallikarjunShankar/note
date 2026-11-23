@@ -1,5 +1,7 @@
 #include "application/document_workflow.hpp"
+#include "ui/command_palette.hpp"
 #include "ui/editor_view.hpp"
+#include "ui/settings_dialog.hpp"
 #include "ui/main_window.hpp"
 
 #include <QAction>
@@ -8,6 +10,7 @@
 #include <QClipboard>
 #include <QContextMenuEvent>
 #include <QDialog>
+#include <QDir>
 #include <QEventLoop>
 #include <QFile>
 #include <QFontMetricsF>
@@ -17,6 +20,9 @@
 #include <QMouseEvent>
 #include <QMenu>
 #include <QLineEdit>
+#include <QLabel>
+#include <QKeySequenceEdit>
+#include <QListWidget>
 #include <QProgressDialog>
 #include <QPushButton>
 #include <QTemporaryDir>
@@ -60,6 +66,81 @@ note::ui::EditorView* activeEditorView(note::ui::MainWindow& window) {
 int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
     try {
+        {
+            note::commands::CommandRegistry registry;
+            note::commands::KeybindingManager keys(QDir::temp().filePath(
+                QStringLiteral("note_palette_smoke_keys.ini")));
+            keys.setDefault("a.one", QKeySequence(Qt::CTRL | Qt::Key_1));
+            int ran = 0;
+            registry.registerCommand({"a.one", "One", "A", "first"}, [&] { ran = 1; });
+            registry.registerCommand({"a.two", "Two", "A", "second"}, [&] { ran = 2; });
+            registry.registerCommand({"a.off", "Off", "A", "disabled"}, [] {},
+                                     [] { return false; });
+            note::ui::CommandPalette palette(registry, nullptr, &keys);
+            palette.show();
+            auto* list = palette.findChild<QListWidget*>();
+            auto* query = palette.findChild<QLineEdit*>();
+            require(list && query && list->count() == 2, "palette hides disabled commands");
+            require(list->item(0)->text().contains(
+                        QKeySequence(Qt::CTRL | Qt::Key_1).toString(QKeySequence::NativeText)) &&
+                    list->item(0)->toolTip() == QStringLiteral("first"),
+                    "palette shows shortcut and description");
+            QKeyEvent up(QEvent::KeyPress, Qt::Key_Up, Qt::NoModifier);
+            QApplication::sendEvent(query, &up);
+            require(list->currentRow() == 1, "Up in the query wraps the palette selection");
+            QKeyEvent enter(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+            QApplication::sendEvent(query, &enter);
+            require(ran == 2, "Enter runs the selected palette command");
+        }
+        {
+            // Keybinding conflicts are explained with readable command names.
+            QTemporaryDir storage;
+            require(storage.isValid(), "keybinding fixture directory");
+            note::customisation::SettingsManager settings(storage.filePath(QStringLiteral("s.ini")));
+            note::customisation::ThemeManager themes(storage.filePath(QStringLiteral("themes")));
+            note::commands::KeybindingManager keys(storage.filePath(QStringLiteral("k.ini")));
+            note::commands::CommandRegistry registry;
+            keys.setDefault("file.save", QKeySequence(Qt::CTRL | Qt::Key_S));
+            keys.setDefault("file.open", QKeySequence(Qt::CTRL | Qt::Key_O));
+            registry.registerCommand({"file.save", "Save", "File", "Save"}, [] {});
+            registry.registerCommand({"file.open", "Open…", "File", "Open"}, [] {});
+            note::ui::SettingsDialog dialog(settings, themes, keys, {}, nullptr, &registry);
+            auto* edit = dialog.findChild<QKeySequenceEdit*>(QStringLiteral("file.open"));
+            require(edit, "keybinding editor exists");
+            edit->setKeySequence(QKeySequence(Qt::CTRL | Qt::Key_S));
+            QMetaObject::invokeMethod(edit, "editingFinished", Qt::DirectConnection);
+            bool explained = false;
+            for (auto* label : dialog.findChildren<QLabel*>())
+                explained = explained || label->text() == QStringLiteral("Conflict with File: Save");
+            require(explained && keys.binding("file.open") == QKeySequence(Qt::CTRL | Qt::Key_O),
+                    "conflicting shortcut is rejected and names the other command");
+        }
+        {
+            // Find Next after editing with the Find dialog closed must use fresh offsets.
+            note::application::DocumentWorkflow searchWorkflow;
+            note::ui::MainWindow searchWindow(searchWorkflow);
+            searchWindow.show();
+            searchWindow.findChild<QAction*>(QStringLiteral("newDocumentAction"))->trigger();
+            auto* view = activeEditorView(searchWindow);
+            require(view, "search fixture editor");
+            for (const char* chunk : {"a", "b", " ", "a", "b"})
+                sendKey(*view, Qt::Key_unknown, Qt::NoModifier, QString::fromLatin1(chunk));
+            searchWindow.findChild<QAction*>(QStringLiteral("search_findAction"))->trigger();
+            auto* panel = searchWindow.findChild<QDialog*>(QStringLiteral("searchPanel"));
+            auto* pattern = panel ? panel->findChild<QLineEdit*>() : nullptr;
+            require(panel && pattern, "search panel exposes its pattern field");
+            pattern->setText(QStringLiteral("ab"));
+            panel->hide();
+            view->restoreCursorPosition(0);
+            sendKey(*view, Qt::Key_unknown, Qt::NoModifier, QStringLiteral("xyz"));
+            searchWindow.findChild<QAction*>(QStringLiteral("search_nextAction"))->trigger();
+            const auto selection = view->selections().selection(0);
+            const auto begin = std::min(selection.anchor, selection.active);
+            require(searchWorkflow.activeDocument()->buffer().textRange(begin, 2) == "ab" &&
+                        std::max(selection.anchor, selection.active) - begin == 2,
+                    "Find Next re-runs a stale search after edits with the panel closed");
+            searchWorkflow.shutdown();
+        }
         note::application::DocumentWorkflow workflow;
         note::ui::MainWindow window(workflow);
         window.show();
@@ -71,6 +152,22 @@ int main(int argc, char* argv[]) {
         require(newAction && saveAction && closeAction && tabs && editorStack,
                 "main window exposes file actions, tabs, and editor surface");
         require(tabs->count() == 0 && !closeAction->isEnabled(), "empty workspace state");
+        const auto action = [&](const char* name) {
+            auto* found = window.findChild<QAction*>(QString::fromLatin1(name));
+            require(found, name);
+            return found;
+        };
+        for (const char* name : {"edit_undoAction", "edit_redoAction", "edit_indentAction",
+                                 "edit_outdentAction", "search_findAction", "search_nextAction",
+                                 "search_previousAction", "search_replaceAction",
+                                 "view_nextTabAction", "view_previousTabAction"})
+            require(!action(name)->isEnabled(), "document commands are disabled with no document");
+        require(action("search_nextAction")->shortcut() == QKeySequence(QKeySequence::FindNext) &&
+                action("view_nextTabAction")->shortcut() == QKeySequence(Qt::CTRL | Qt::Key_Tab),
+                "find-next and tab-switch commands have default shortcuts");
+        for (const char* menuName : {"edit_indentAction", "search_nextAction", "view_nextTabAction"})
+            require(!action(menuName)->associatedObjects().isEmpty(),
+                    "new commands are reachable from a menu");
 
         newAction->trigger();
         newAction->trigger();
@@ -79,6 +176,14 @@ int main(int argc, char* argv[]) {
         require(workflow.activeDocument() &&
                 workflow.activeDocument()->id() == *workflow.tabs().at(1),
                 "new tab becomes active");
+
+        require(action("view_nextTabAction")->isEnabled(), "tab switching enabled with two tabs");
+        action("view_nextTabAction")->trigger();
+        require(tabs->currentIndex() == 0, "next tab wraps to the first tab");
+        action("view_previousTabAction")->trigger();
+        require(tabs->currentIndex() == 1, "previous tab wraps to the last tab");
+        require(!action("edit_undoAction")->isEnabled() && action("search_findAction")->isEnabled(),
+                "undo is disabled for a fresh document; find is enabled");
 
         tabs->setCurrentIndex(0);
         require(workflow.activeDocument() &&
@@ -92,12 +197,18 @@ int main(int argc, char* argv[]) {
         sendKey(*editor, Qt::Key_unknown, Qt::NoModifier, QString::fromUtf8("λ"));
         require(active->buffer().text() == "Aλ" && editor->cursors().primaryOffset() == 3,
                 "keyboard inserts ASCII and Unicode through editing engine");
+        require(action("edit_undoAction")->isEnabled() && !action("edit_redoAction")->isEnabled(),
+                "undo becomes enabled after an edit");
+        action("edit_indentAction")->trigger();
+        require(active->buffer().text().starts_with(' '), "Indent Lines command indents");
+        action("edit_outdentAction")->trigger();
+        require(active->buffer().text() == "Aλ", "Outdent Lines command outdents");
         editor->setIndentationConfiguration(false, 2);
         editor->selectRange(0, active->buffer().sizeBytes());
         sendKey(*editor, Qt::Key_Tab);
         require(active->buffer().text() == "  Aλ",
                 "Tab indents selected lines using the configured space width");
-        sendKey(*editor, Qt::Key_Tab, Qt::ShiftModifier);
+        sendKey(*editor, Qt::Key_Backtab, Qt::ShiftModifier);
         require(active->buffer().text() == "Aλ",
                 "Shift+Tab outdents selected lines by one configured level");
         editor->selections().clearSelections();
@@ -108,7 +219,7 @@ int main(int argc, char* argv[]) {
         sendKey(*editor, Qt::Key_Tab);
         require(active->buffer().text() == "\tAλ",
                 "Tab inserts a tab when tab indentation is configured");
-        sendKey(*editor, Qt::Key_Tab, Qt::ShiftModifier);
+        sendKey(*editor, Qt::Key_Backtab, Qt::ShiftModifier);
         require(active->buffer().text() == "Aλ",
                 "Shift+Tab removes a leading configured tab");
         editor->setIndentationConfiguration(false, 4);

@@ -53,8 +53,25 @@ SearchPanel::SearchPanel(QWidget* parent) : QDialog(parent) {
 }
 
 void SearchPanel::setActiveView(EditorView* view) {
+    // Called on every edit: only re-search while the panel is visible; otherwise
+    // drop results (offsets may be stale) and let findNext/open re-run them.
+    if (!isVisible() && view_ && !matches_.empty()) {
+        matches_.clear();
+        current_ = 0;
+        view_->setSearchMatches({});
+    }
     view_ = view;
-    runSearch();
+    if (isVisible()) runSearch();
+}
+
+void SearchPanel::findNext() {
+    if (matches_.empty()) runSearch();
+    nextMatch();
+}
+
+void SearchPanel::findPrevious() {
+    if (matches_.empty()) runSearch();
+    previousMatch();
 }
 
 void SearchPanel::openFind() {
@@ -64,6 +81,7 @@ void SearchPanel::openFind() {
     activateWindow();
     findEdit_->setFocus();
     findEdit_->selectAll();
+    runSearch();
 }
 
 void SearchPanel::openReplace() {
@@ -73,6 +91,7 @@ void SearchPanel::openReplace() {
     activateWindow();
     findEdit_->setFocus();
     findEdit_->selectAll();
+    runSearch();
 }
 
 void SearchPanel::runSearch() {

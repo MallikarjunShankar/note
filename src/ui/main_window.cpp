@@ -168,6 +168,13 @@ void MainWindow::createActions() {
     keybindingManager_.setDefault("edit.redo", QKeySequence::Redo);
     keybindingManager_.setDefault("search.find", QKeySequence::Find);
     keybindingManager_.setDefault("search.replace", QKeySequence::Replace);
+    keybindingManager_.setDefault("search.next", QKeySequence::FindNext);
+    keybindingManager_.setDefault("search.previous", QKeySequence::FindPrevious);
+    keybindingManager_.setDefault("edit.indent", {});
+    keybindingManager_.setDefault("edit.outdent", {});
+    keybindingManager_.setDefault("view.nextTab", QKeySequence(Qt::CTRL | Qt::Key_Tab));
+    keybindingManager_.setDefault("view.previousTab",
+                                  QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_Tab));
     keybindingManager_.setDefault("view.lineNumbers", {});
     keybindingManager_.setDefault("view.whitespace", {});
     keybindingManager_.setDefault("view.indentationGuides", {});
@@ -257,22 +264,56 @@ void MainWindow::createActions() {
     });
 
     auto* editMenu = menuBar()->addMenu(tr("&Edit"));
+    const auto hasEditor = [this] { return activeEditorView() != nullptr; };
     auto* undoAction = editMenu->addAction(tr("&Undo"));
-    registerAction(undoAction, "edit.undo", "Edit", "Undo the active edit");
+    registerAction(undoAction, "edit.undo", "Edit", "Undo the last edit",
+                   [this] { auto* view = activeEditorView(); return view && view->canUndo(); });
     connect(undoAction, &QAction::triggered, this, [this] {
         if (auto* view = activeEditorView()) (void)view->undo();
     });
     auto* redoAction = editMenu->addAction(tr("&Redo"));
-    registerAction(redoAction, "edit.redo", "Edit", "Redo the active edit");
+    registerAction(redoAction, "edit.redo", "Edit", "Redo the last undone edit",
+                   [this] { auto* view = activeEditorView(); return view && view->canRedo(); });
     connect(redoAction, &QAction::triggered, this, [this] {
         if (auto* view = activeEditorView()) (void)view->redo();
     });
     editMenu->addSeparator();
-    auto* findAction = editMenu->addAction(tr("&Find"));
-    registerAction(findAction, "search.find", "Search", "Find in the active document");
+    auto* indentAction = editMenu->addAction(tr("&Indent Lines"));
+    registerAction(indentAction, "edit.indent", "Edit",
+                   "Indent the current or selected lines (also Tab)", hasEditor);
+    connect(indentAction, &QAction::triggered, this, [this] {
+        if (auto* view = activeEditorView()) view->indentSelectedLines();
+    });
+    auto* outdentAction = editMenu->addAction(tr("&Outdent Lines"));
+    registerAction(outdentAction, "edit.outdent", "Edit",
+                   "Outdent the current or selected lines (also Shift+Tab)", hasEditor);
+    connect(outdentAction, &QAction::triggered, this, [this] {
+        if (auto* view = activeEditorView()) view->outdentSelectedLines();
+    });
+    editMenu->addSeparator();
+    auto* findAction = editMenu->addAction(tr("&Find…"));
+    registerAction(findAction, "search.find", "Search", "Find text in the active document",
+                   hasEditor);
     connect(findAction, &QAction::triggered, this, [this] { showFind(); });
-    auto* replaceAction = editMenu->addAction(tr("&Replace"));
-    registerAction(replaceAction, "search.replace", "Search", "Find and replace in the active document");
+    auto* findNextAction = editMenu->addAction(tr("Find &Next"));
+    registerAction(findNextAction, "search.next", "Search",
+                   "Select the next match of the current search", hasEditor);
+    connect(findNextAction, &QAction::triggered, this, [this] {
+        if (!searchPanel_) return;
+        searchPanel_->setActiveView(activeEditorView());
+        searchPanel_->findNext();
+    });
+    auto* findPreviousAction = editMenu->addAction(tr("Find Pre&vious"));
+    registerAction(findPreviousAction, "search.previous", "Search",
+                   "Select the previous match of the current search", hasEditor);
+    connect(findPreviousAction, &QAction::triggered, this, [this] {
+        if (!searchPanel_) return;
+        searchPanel_->setActiveView(activeEditorView());
+        searchPanel_->findPrevious();
+    });
+    auto* replaceAction = editMenu->addAction(tr("&Replace…"));
+    registerAction(replaceAction, "search.replace", "Search",
+                   "Find and replace text in the active document", hasEditor);
     connect(replaceAction, &QAction::triggered, this, [this] { showReplace(); });
 
     auto* viewMenu = menuBar()->addMenu(tr("&View"));
@@ -321,6 +362,22 @@ void MainWindow::createActions() {
         applyCustomisation();
     });
 
+    viewMenu->addSeparator();
+    const auto hasSeveralTabs = [this] { return workflow_.tabs().size() > 1; };
+    auto* nextTab = viewMenu->addAction(tr("Next &Tab"));
+    registerAction(nextTab, "view.nextTab", "View", "Switch to the next document tab",
+                   hasSeveralTabs);
+    connect(nextTab, &QAction::triggered, this, [this] {
+        if (tabs_->count() > 1) tabs_->setCurrentIndex((tabs_->currentIndex() + 1) % tabs_->count());
+    });
+    auto* previousTab = viewMenu->addAction(tr("Previous T&ab"));
+    registerAction(previousTab, "view.previousTab", "View",
+                   "Switch to the previous document tab", hasSeveralTabs);
+    connect(previousTab, &QAction::triggered, this, [this] {
+        const int count = tabs_->count();
+        if (count > 1) tabs_->setCurrentIndex((tabs_->currentIndex() + count - 1) % count);
+    });
+
     auto* settingsMenu = menuBar()->addMenu(tr("&Settings"));
     auto* settingsAction = settingsMenu->addAction(tr("&Preferences"));
     registerAction(settingsAction, "settings.open", "Settings", "Open settings");
@@ -328,7 +385,7 @@ void MainWindow::createActions() {
     auto* paletteAction = settingsMenu->addAction(tr("Command &Palette"));
     registerAction(paletteAction, "commands.palette", "Commands", "Search and execute commands");
     connect(paletteAction, &QAction::triggered, this, [this] {
-        CommandPalette palette(commandRegistry_, this);
+        CommandPalette palette(commandRegistry_, this, &keybindingManager_);
         palette.exec();
     });
 
@@ -557,7 +614,7 @@ void MainWindow::showReplace() {
 
 void MainWindow::showSettings() {
     SettingsDialog dialog(settingsManager_, themeManager_, keybindingManager_,
-                          [this] { applyCustomisation(); }, this);
+                          [this] { applyCustomisation(); }, this, &commandRegistry_);
     dialog.exec();
 }
 
@@ -1113,22 +1170,22 @@ void MainWindow::contextMenuEvent(QContextMenuEvent* event) {
 }
 
 void MainWindow::showContextMenuAt(const QPoint& globalPosition) {
+    // Fixed conventional order; disabled entries stay visible so they are discoverable.
+    static constexpr const char* layout[] = {
+        "edit.undo", "edit.redo", nullptr, "edit.indent", "edit.outdent", nullptr,
+        "search.find", "search.next", "search.previous", "search.replace"};
     QMenu menu(this);
-    bool hasEditCommands = false;
-    bool hasSearchCommands = false;
-    for (const auto& command : commandRegistry_.commands()) {
-        if (!commandRegistry_.isEnabled(command.id)) continue;
-        if (command.category != "Edit" && command.category != "Search") continue;
-        if (command.category == "Search" && hasEditCommands && !hasSearchCommands)
+    for (const char* id : layout) {
+        if (!id) {
             menu.addSeparator();
-        const auto action = commandActions_.find(command.id);
+            continue;
+        }
+        const auto action = commandActions_.find(id);
         if (action == commandActions_.end()) continue;
-        action->second->setEnabled(commandRegistry_.isEnabled(command.id));
+        action->second->setEnabled(commandRegistry_.isEnabled(id));
         menu.addAction(action->second);
-        hasEditCommands = hasEditCommands || command.category == "Edit";
-        hasSearchCommands = hasSearchCommands || command.category == "Search";
     }
-    if (!menu.isEmpty()) menu.exec(globalPosition);
+    menu.exec(globalPosition);
 }
 
 void MainWindow::closeEvent(QCloseEvent* event) {

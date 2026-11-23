@@ -56,12 +56,6 @@ qt_add_executable(note
     src/ui/search_panel.hpp
     src/ui/settings_dialog.cpp
     src/ui/settings_dialog.hpp
-    src/ui/command_palette.cpp
-    src/ui/command_palette.hpp
-    src/ui/search_panel.cpp
-    src/ui/search_panel.hpp
-    src/ui/settings_dialog.cpp
-    src/ui/settings_dialog.hpp
 )
 
 target_link_libraries(note PRIVATE note_app_core Qt6::Widgets)
@@ -194,6 +188,22 @@ if(BUILD_TESTING)
     target_include_directories(note_editor_presentation_bench PRIVATE src)
     target_link_libraries(note_editor_presentation_bench PRIVATE
         note_core Qt6::Widgets)
+
+    add_executable(note_integrated_bench
+        benchmarks/integrated/integrated_bench.cpp
+        src/ui/document_preview.cpp
+        src/ui/editor_renderer.cpp
+        src/ui/editor_view.cpp
+        src/ui/main_window.cpp
+        src/ui/command_palette.cpp
+        src/ui/search_panel.cpp
+        src/ui/settings_dialog.cpp
+    )
+    target_include_directories(note_integrated_bench PRIVATE src)
+    target_link_libraries(note_integrated_bench PRIVATE note_app_core Qt6::Widgets)
+    if(WIN32)
+        target_link_libraries(note_integrated_bench PRIVATE Psapi)
+    endif()
 endif()
 
 if(MSVC)

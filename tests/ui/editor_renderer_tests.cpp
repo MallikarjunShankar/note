@@ -7,6 +7,7 @@
 #include <QCoreApplication>
 #include <QImage>
 #include <QEventLoop>
+#include <QFontMetricsF>
 #include <QScrollBar>
 #include <QTimer>
 #include <QWheelEvent>
@@ -224,12 +225,19 @@ void testPresentationDecorationsAndOccurrences() {
             "relative line labels update when the primary cursor moves");
 }
 
+// Width as a fraction of a fixture line's rendered advance: wrap tests must not
+// assume glyph widths (Qt 6.12's offscreen "FixedFont" is not even monospace).
+int widthOf(const EditorRenderer& renderer, const char* line, qreal fraction) {
+    return static_cast<int>(QFontMetricsF(renderer.configuration().font)
+                                .horizontalAdvance(QString::fromUtf8(line)) * fraction);
+}
+
 void testWordWrappingAndWrappedGeometry() {
     TextBuffer text("abcdefghijabcdefghij\nnext");
     CursorManager cursors(text);
     SelectionManager selections(text);
     EditorRenderer renderer(text, cursors, selections);
-    renderer.resize(100, 54);
+    renderer.resize(widthOf(renderer, "abcdefghijabcdefghij", 0.625), 54);
     auto configuration = renderer.configuration();
     configuration.lineNumbers = false;
     configuration.lineHeight = 18;
@@ -295,7 +303,7 @@ void testWrappedScrollbarUsesVisualRows() {
     CursorManager cursors(text);
     SelectionManager selections(text);
     EditorRenderer renderer(text, cursors, selections);
-    renderer.resize(105, 72);
+    renderer.resize(widthOf(renderer, "abcdefghijabcdefghij", 0.65), 72);
     auto configuration = renderer.configuration();
     configuration.lineNumbers = false;
     configuration.lineHeight = 18;

@@ -2,6 +2,7 @@
 
 #include "customisation/settings_manager.hpp"
 #include "customisation/theme_manager.hpp"
+#include "commands/command_registry.hpp"
 #include "commands/keybinding_manager.hpp"
 
 #include <QDialog>
@@ -17,7 +18,8 @@ public:
                    customisation::ThemeManager& themes,
                    commands::KeybindingManager& keybindings,
                    std::function<void()> applyCallback,
-                   QWidget* parent = nullptr);
+                   QWidget* parent = nullptr,
+                   const commands::CommandRegistry* commandNames = nullptr);
 
 private:
     void apply();

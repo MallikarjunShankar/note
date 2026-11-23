@@ -75,6 +75,16 @@ bool EditorView::redo() {
     return true;
 }
 
+void EditorView::indentSelectedLines() {
+    (void)history_.indentLines(indentationUsesTabs_, indentationWidth_);
+    afterEdit();
+}
+
+void EditorView::outdentSelectedLines() {
+    (void)history_.outdentLines(indentationWidth_);
+    afterEdit();
+}
+
 void EditorView::beginUndoTransaction() {
     history_.beginTransaction();
 }
@@ -221,12 +231,12 @@ bool EditorView::handleKeyPress(QKeyEvent* event) {
         insertNewlineWithIndent();
         afterEdit();
         return true;
+    case Qt::Key_Backtab: // Qt reports Shift+Tab as Backtab on real keyboards.
+        outdentSelectedLines();
+        return true;
     case Qt::Key_Tab:
-        if (shift)
-            (void)history_.outdentLines(indentationWidth_);
-        else
-            (void)history_.indentLines(indentationUsesTabs_, indentationWidth_);
-        afterEdit();
+        if (shift) outdentSelectedLines();
+        else indentSelectedLines();
         return true;
     default:
         break;

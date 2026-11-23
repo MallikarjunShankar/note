@@ -15,10 +15,14 @@ The Windows column is the initial V1 distribution mapping.
 | Redo (`edit.redo`) | `Ctrl+Y` | `QKeySequence::Redo` |
 | Find (`search.find`) | `Ctrl+F` | `QKeySequence::Find` |
 | Replace (`search.replace`) | `Ctrl+H` | `QKeySequence::Replace` |
+| Find next (`search.next`) | `F3` (also `Ctrl+G`) | `QKeySequence::FindNext` |
+| Find previous (`search.previous`) | `Shift+F3` (also `Ctrl+Shift+G`) | `QKeySequence::FindPrevious` |
+| Next tab (`view.nextTab`) | `Ctrl+Tab` | Explicit Qt key sequence |
+| Previous tab (`view.previousTab`) | `Ctrl+Shift+Tab` | Explicit Qt key sequence |
 | Preferences (`settings.open`) | `Ctrl+,` | Explicit Qt key sequence |
 | Command palette (`commands.palette`) | `Ctrl+P` | Explicit Qt key sequence |
 
-`file.external`, `file.terminal`, and the View toggles have no default shortcut;
+`file.external`, `file.terminal`, the View toggles, and Indent/Outdent Lines (`edit.indent`, `edit.outdent`; the editor also handles Tab/Shift+Tab directly) have no default shortcut;
 they can be assigned from Settings > Keybindings. Shortcut overrides are
 persisted separately from settings and themes.
 
