@@ -729,9 +729,13 @@ void MainWindow::refreshPresentation() {
     const auto* document = workflow_.activeDocument();
     const bool hasDocument = document != nullptr;
     auto activeView = editorViews_.find(document ? document->id() : 0);
-    editorStack_->setCurrentWidget(
-        hasDocument && activeView != editorViews_.end() ? activeView->second.view
-                                                        : emptyEditor_);
+    QWidget* current = hasDocument && activeView != editorViews_.end()
+        ? activeView->second.view : emptyEditor_;
+    if (editorStack_->currentWidget() != current) {
+        editorStack_->setCurrentWidget(current);
+        // Keyboard-only use: a newly active document takes focus (not the tab bar).
+        if (current != emptyEditor_) current->setFocus(Qt::OtherFocusReason);
+    }
     if (hasDocument && activeView != editorViews_.end())
         activeView->second.view->refreshFromModel();
     saveAction_->setEnabled(hasDocument);

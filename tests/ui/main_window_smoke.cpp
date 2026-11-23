@@ -174,6 +174,79 @@ int main(int argc, char* argv[]) {
                     "a newly editable theme colour is saved with the custom theme");
         }
         {
+            // Regression: PageUp/PageDown and Ctrl+Home/Ctrl+End did nothing, so a
+            // long document could only be traversed line by line from the keyboard.
+            note::application::DocumentWorkflow navWorkflow;
+            note::ui::MainWindow navWindow(navWorkflow);
+            navWindow.resize(800, 600);
+            navWindow.show();
+            navWindow.activateWindow();
+            QApplication::processEvents();
+            navWindow.findChild<QAction*>(QStringLiteral("newDocumentAction"))->trigger();
+            auto* view = activeEditorView(navWindow);
+            require(view, "navigation fixture editor");
+            require(view->renderer()->hasFocus(),
+                    "a new document takes keyboard focus so typing works without a click");
+            std::string text;
+            for (int line = 0; line < 300; ++line) text += "line\n";
+            view->replaceRange(0, 0, text);
+            const auto size = navWorkflow.activeDocument()->buffer().sizeBytes();
+            sendKey(*view, Qt::Key_End, Qt::ControlModifier);
+            require(view->cursors().primaryOffset() == size, "Ctrl+End moves to the document end");
+            sendKey(*view, Qt::Key_Home, Qt::ControlModifier);
+            require(view->cursors().primaryOffset() == 0, "Ctrl+Home moves to the document start");
+            sendKey(*view, Qt::Key_PageDown);
+            const auto paged = view->cursors().primaryLocation().line;
+            require(paged > 1 && paged < 300, "PageDown moves by about one viewport");
+            sendKey(*view, Qt::Key_PageUp);
+            require(view->cursors().primaryLocation().line == 0, "PageUp moves back");
+            sendKey(*view, Qt::Key_PageDown, Qt::ShiftModifier);
+            auto selection = view->selections().selection(0);
+            require(selection.anchor == 0 && selection.active == view->cursors().primaryOffset() &&
+                        selection.active > 0,
+                    "Shift+PageDown extends the selection");
+            sendKey(*view, Qt::Key_End, Qt::ControlModifier | Qt::ShiftModifier);
+            selection = view->selections().selection(0);
+            require(selection.anchor == 0 && selection.active == size,
+                    "Ctrl+Shift+End selects to the document end");
+
+            // Smart indentation through real key events, with pairing on and off.
+            for (const bool pairing : {true, false}) {
+                navWindow.findChild<QAction*>(QStringLiteral("newDocumentAction"))->trigger();
+                auto* indentView = activeEditorView(navWindow);
+                note::editor::BracketConfiguration brackets;
+                if (!pairing)
+                    brackets.parentheses = brackets.squareBrackets = brackets.curlyBraces =
+                        brackets.doubleQuotes = brackets.singleQuotes = false;
+                indentView->setBracketConfiguration(brackets);
+                for (const char* chunk : {" ", " ", "i", "f", " ", "{"})
+                    sendKey(*indentView, Qt::Key_unknown, Qt::NoModifier, QString::fromLatin1(chunk));
+                sendKey(*indentView, Qt::Key_Return);
+                const auto& indented = navWorkflow.activeDocument()->buffer();
+                require(indented.text().rfind("  if {\n      ", 0) == 0,
+                        "Enter after { keeps the line indent and adds one level");
+                if (!pairing) {
+                    sendKey(*indentView, Qt::Key_unknown, Qt::NoModifier, QStringLiteral("}"));
+                    require(indented.text() == "  if {\n  }",
+                            "typing } on a blank indented line removes one level");
+                    sendKey(*indentView, Qt::Key_Z, Qt::ControlModifier);
+                    require(indented.text() == "  if {\n      ", "the } outdent is one undo step");
+                } else {
+                    // Regression: Enter between paired braces left the body at the
+                    // outer indent ("{\n|}").
+                    require(indented.text() == "  if {\n      \n  }" &&
+                                indentView->cursors().primaryOffset() == 13,
+                            "Enter between paired braces opens an indented body line");
+                    sendKey(*indentView, Qt::Key_unknown, Qt::NoModifier, QStringLiteral("x"));
+                    require(indented.text() == "  if {\n      x\n  }", "typing lands in the body");
+                    sendKey(*indentView, Qt::Key_Z, Qt::ControlModifier);
+                    sendKey(*indentView, Qt::Key_Z, Qt::ControlModifier);
+                    require(indented.text() == "  if {}", "opening the pair is one undo step");
+                }
+            }
+            navWorkflow.shutdown();
+        }
+        {
             // Find Next after editing with the Find dialog closed must use fresh offsets.
             note::application::DocumentWorkflow searchWorkflow;
             note::ui::MainWindow searchWindow(searchWorkflow);

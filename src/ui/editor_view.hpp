@@ -66,6 +66,9 @@ private:
     bool handleMouseRelease(QMouseEvent* event);
     bool handleMouseDoubleClick(QMouseEvent* event);
     bool handleTextCharacter(char character);
+    // Private moveCursor keys for Ctrl+Home/Ctrl+End (outside Qt::Key values).
+    static constexpr int documentStartKey{-1};
+    static constexpr int documentEndKey{-2};
     void moveCursor(int key, bool extendSelection);
     void setPrimarySelection(std::size_t anchor, std::size_t active);
     void collapseSelectionsAt(std::size_t offset);
@@ -79,6 +82,7 @@ private:
     void updateMatchingBrackets(bool force = false);
     void backspaceWithPairHandling();
     void insertNewlineWithIndent();
+    bool dedentClosingBrace();
     void copySelection(bool cut);
     void pasteClipboard();
     void selectWord(std::size_t offset);
