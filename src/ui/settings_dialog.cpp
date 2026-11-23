@@ -191,19 +191,19 @@ SettingsDialog::SettingsDialog(customisation::SettingsManager& settings,
                                       2, keyPage);
     keyTable->setHorizontalHeaderLabels({tr("Command"), tr("Shortcut")});
     keyTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    // Users see "Category: Name"; internal command IDs stay in tooltips.
+    const auto displayName = [commandNames](const std::string& id) {
+        if (commandNames)
+            for (const auto& command : commandNames->commands())
+                if (command.id == id)
+                    return QStringLiteral("%1: %2").arg(QString::fromStdString(command.category),
+                                                        QString::fromStdString(command.text));
+        return QString::fromStdString(id);
+    };
     int row = 0;
     std::vector<std::pair<std::string, QKeySequenceEdit*>> editors;
     for (const auto& binding : keybindings_.bindings()) {
-        auto label = QString::fromStdString(binding.commandId);
-        if (commandNames) {
-            for (const auto& command : commandNames->commands()) {
-                if (command.id != binding.commandId) continue;
-                label = QStringLiteral("%1: %2").arg(QString::fromStdString(command.category),
-                                                     QString::fromStdString(command.text));
-                break;
-            }
-        }
-        auto* item = new QTableWidgetItem(label);
+        auto* item = new QTableWidgetItem(displayName(binding.commandId));
         item->setToolTip(QString::fromStdString(binding.commandId));
         keyTable->setItem(row, 0, item);
         auto* edit = new QKeySequenceEdit(binding.sequence, keyPage);
@@ -227,13 +227,13 @@ SettingsDialog::SettingsDialog(customisation::SettingsManager& settings,
     });
     for (const auto& [id, edit] : editors) {
         connect(edit, &QKeySequenceEdit::editingFinished, this,
-                [this, id, edit, keyFeedback] {
+                [this, id, edit, keyFeedback, displayName] {
             std::string conflict;
             if (!keybindings_.setBinding(id, edit->keySequence(), &conflict)) {
                 edit->setKeySequence(keybindings_.binding(id));
                 keyFeedback->setText(conflict.empty()
                     ? tr("Shortcut could not be set")
-                    : tr("Conflict with %1").arg(QString::fromStdString(conflict)));
+                    : tr("Conflict with %1").arg(displayName(conflict)));
             } else {
                 keyFeedback->setText(tr("Shortcut updated"));
                 if (applyCallback_) applyCallback_();

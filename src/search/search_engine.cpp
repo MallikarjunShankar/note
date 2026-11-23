@@ -91,15 +91,22 @@ SearchResult SearchEngine::find(const editor::TextBuffer& buffer,
         [&](std::string_view segment, std::span<const editor::LineEnding>) {
             pending.append(segment);
             while (pending.size() >= chunkBytesLimit) {
-                std::string window = pending.substr(0, chunkBytesLimit);
-                const auto keep = std::min<std::size_t>(512, chunkBytesLimit);
-                const auto advance = chunkBytesLimit - keep;
-                pending.erase(0, chunkBytesLimit - keep);
-                const auto retained = pending;
-                pending = window;
+                // Cut and overlap only at scalar starts: a window beginning with a
+                // continuation byte decodes to U+FFFD and shifts every byte offset.
+                const auto scalarStart = [&](std::size_t index) {
+                    while (index > 0 &&
+                           (static_cast<unsigned char>(pending[index]) & 0xC0) == 0x80)
+                        --index;
+                    return index;
+                };
+                const auto cut = scalarStart(chunkBytesLimit);
+                auto advance = scalarStart(cut > 512 ? cut - 512 : 0);
+                if (advance == 0) advance = cut;
+                std::string retained = pending.substr(advance);
+                pending.resize(cut);
                 processWindow();
                 windowBase += advance;
-                pending = retained;
+                pending = std::move(retained);
                 if (result.matches.size() >= maxMatches) return false;
                 if (std::chrono::duration_cast<std::chrono::milliseconds>(
                         std::chrono::steady_clock::now() - started).count() > 100) {

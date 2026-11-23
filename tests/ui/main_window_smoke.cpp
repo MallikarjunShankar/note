@@ -1,6 +1,7 @@
 #include "application/document_workflow.hpp"
 #include "ui/command_palette.hpp"
 #include "ui/editor_view.hpp"
+#include "ui/settings_dialog.hpp"
 #include "ui/main_window.hpp"
 
 #include <QAction>
@@ -19,6 +20,8 @@
 #include <QMouseEvent>
 #include <QMenu>
 #include <QLineEdit>
+#include <QLabel>
+#include <QKeySequenceEdit>
 #include <QListWidget>
 #include <QProgressDialog>
 #include <QPushButton>
@@ -88,6 +91,29 @@ int main(int argc, char* argv[]) {
             QKeyEvent enter(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
             QApplication::sendEvent(query, &enter);
             require(ran == 2, "Enter runs the selected palette command");
+        }
+        {
+            // Keybinding conflicts are explained with readable command names.
+            QTemporaryDir storage;
+            require(storage.isValid(), "keybinding fixture directory");
+            note::customisation::SettingsManager settings(storage.filePath(QStringLiteral("s.ini")));
+            note::customisation::ThemeManager themes(storage.filePath(QStringLiteral("themes")));
+            note::commands::KeybindingManager keys(storage.filePath(QStringLiteral("k.ini")));
+            note::commands::CommandRegistry registry;
+            keys.setDefault("file.save", QKeySequence(Qt::CTRL | Qt::Key_S));
+            keys.setDefault("file.open", QKeySequence(Qt::CTRL | Qt::Key_O));
+            registry.registerCommand({"file.save", "Save", "File", "Save"}, [] {});
+            registry.registerCommand({"file.open", "Open…", "File", "Open"}, [] {});
+            note::ui::SettingsDialog dialog(settings, themes, keys, {}, nullptr, &registry);
+            auto* edit = dialog.findChild<QKeySequenceEdit*>(QStringLiteral("file.open"));
+            require(edit, "keybinding editor exists");
+            edit->setKeySequence(QKeySequence(Qt::CTRL | Qt::Key_S));
+            QMetaObject::invokeMethod(edit, "editingFinished", Qt::DirectConnection);
+            bool explained = false;
+            for (auto* label : dialog.findChildren<QLabel*>())
+                explained = explained || label->text() == QStringLiteral("Conflict with File: Save");
+            require(explained && keys.binding("file.open") == QKeySequence(Qt::CTRL | Qt::Key_O),
+                    "conflicting shortcut is rejected and names the other command");
         }
         {
             // Find Next after editing with the Find dialog closed must use fresh offsets.
