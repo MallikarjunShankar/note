@@ -56,12 +56,6 @@ qt_add_executable(note
     src/ui/search_panel.hpp
     src/ui/settings_dialog.cpp
     src/ui/settings_dialog.hpp
-    src/ui/command_palette.cpp
-    src/ui/command_palette.hpp
-    src/ui/search_panel.cpp
-    src/ui/search_panel.hpp
-    src/ui/settings_dialog.cpp
-    src/ui/settings_dialog.hpp
 )
 
 target_link_libraries(note PRIVATE note_app_core Qt6::Widgets)

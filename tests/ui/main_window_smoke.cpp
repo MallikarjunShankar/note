@@ -97,7 +97,7 @@ int main(int argc, char* argv[]) {
         sendKey(*editor, Qt::Key_Tab);
         require(active->buffer().text() == "  Aλ",
                 "Tab indents selected lines using the configured space width");
-        sendKey(*editor, Qt::Key_Tab, Qt::ShiftModifier);
+        sendKey(*editor, Qt::Key_Backtab, Qt::ShiftModifier);
         require(active->buffer().text() == "Aλ",
                 "Shift+Tab outdents selected lines by one configured level");
         editor->selections().clearSelections();
@@ -108,7 +108,7 @@ int main(int argc, char* argv[]) {
         sendKey(*editor, Qt::Key_Tab);
         require(active->buffer().text() == "\tAλ",
                 "Tab inserts a tab when tab indentation is configured");
-        sendKey(*editor, Qt::Key_Tab, Qt::ShiftModifier);
+        sendKey(*editor, Qt::Key_Backtab, Qt::ShiftModifier);
         require(active->buffer().text() == "Aλ",
                 "Shift+Tab removes a leading configured tab");
         editor->setIndentationConfiguration(false, 4);

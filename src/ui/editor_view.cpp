@@ -221,6 +221,10 @@ bool EditorView::handleKeyPress(QKeyEvent* event) {
         insertNewlineWithIndent();
         afterEdit();
         return true;
+    case Qt::Key_Backtab: // Qt reports Shift+Tab as Backtab on real keyboards.
+        (void)history_.outdentLines(indentationWidth_);
+        afterEdit();
+        return true;
     case Qt::Key_Tab:
         if (shift)
             (void)history_.outdentLines(indentationWidth_);
