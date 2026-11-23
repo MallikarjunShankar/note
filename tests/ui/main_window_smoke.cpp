@@ -89,6 +89,32 @@ int main(int argc, char* argv[]) {
             QApplication::sendEvent(query, &enter);
             require(ran == 2, "Enter runs the selected palette command");
         }
+        {
+            // Find Next after editing with the Find dialog closed must use fresh offsets.
+            note::application::DocumentWorkflow searchWorkflow;
+            note::ui::MainWindow searchWindow(searchWorkflow);
+            searchWindow.show();
+            searchWindow.findChild<QAction*>(QStringLiteral("newDocumentAction"))->trigger();
+            auto* view = activeEditorView(searchWindow);
+            require(view, "search fixture editor");
+            for (const char* chunk : {"a", "b", " ", "a", "b"})
+                sendKey(*view, Qt::Key_unknown, Qt::NoModifier, QString::fromLatin1(chunk));
+            searchWindow.findChild<QAction*>(QStringLiteral("search_findAction"))->trigger();
+            auto* panel = searchWindow.findChild<QDialog*>(QStringLiteral("searchPanel"));
+            auto* pattern = panel ? panel->findChild<QLineEdit*>() : nullptr;
+            require(panel && pattern, "search panel exposes its pattern field");
+            pattern->setText(QStringLiteral("ab"));
+            panel->hide();
+            view->restoreCursorPosition(0);
+            sendKey(*view, Qt::Key_unknown, Qt::NoModifier, QStringLiteral("xyz"));
+            searchWindow.findChild<QAction*>(QStringLiteral("search_nextAction"))->trigger();
+            const auto selection = view->selections().selection(0);
+            const auto begin = std::min(selection.anchor, selection.active);
+            require(searchWorkflow.activeDocument()->buffer().textRange(begin, 2) == "ab" &&
+                        std::max(selection.anchor, selection.active) - begin == 2,
+                    "Find Next re-runs a stale search after edits with the panel closed");
+            searchWorkflow.shutdown();
+        }
         note::application::DocumentWorkflow workflow;
         note::ui::MainWindow window(workflow);
         window.show();
