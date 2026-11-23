@@ -35,7 +35,7 @@ file(GET_RUNTIME_DEPENDENCIES
     UNRESOLVED_DEPENDENCIES_VAR unresolved
     # Qt DLLs exist both here (from windeployqt) and in the toolchain.
     CONFLICTING_DEPENDENCIES_PREFIX conflict
-    PRE_EXCLUDE_REGEXES "^api-ms-" "^ext-ms-" "^azureattestmanager\.dll$" "^azureattestnormal\.dll$" "^hvsifiletrust\.dll$" "^PdmUtilities\.dll$" "^wtdsensor\.dll$" "^wpaxholder\.dll$" "^wtdccm\.dll$")
+    PRE_EXCLUDE_REGEXES "^api-ms-" "^ext-ms-" "^azureattestmanager\.dll$" "^azureattestnormal\.dll$" "^hvsifiletrust\.dll$" "^pdmutilities\.dll$" "^wtdsensor\.dll$" "^wpaxholder\.dll$" "^wtdccm\.dll$")
 foreach(name IN LISTS conflict_FILENAMES)
     if(NOT EXISTS "${CMAKE_INSTALL_PREFIX}/${name}")
         message(FATAL_ERROR "deploy: ${name} found in several places: ${conflict_${name}}")
