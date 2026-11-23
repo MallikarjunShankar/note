@@ -7,12 +7,15 @@
 #include <QColor>
 #include <QFont>
 #include <QRectF>
+#include <QTimer>
 #include <QVector>
 
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace note::editor {
 class CursorManager;
@@ -69,6 +72,8 @@ public:
     [[nodiscard]] qreal textOriginX() const;
     [[nodiscard]] QString displayedLineNumber(std::size_t line) const;
     [[nodiscard]] std::size_t visualRowCount(std::size_t line) const;
+    [[nodiscard]] std::size_t totalVisualRowCount() const noexcept;
+    [[nodiscard]] bool wrappedRowIndexComplete() const noexcept;
     void scrollToLine(std::size_t line);
     void setHorizontalOffset(qreal offset);
     [[nodiscard]] qreal horizontalOffset() const noexcept;
@@ -132,6 +137,12 @@ private:
     [[nodiscard]] static bool isWordByte(unsigned char value) noexcept;
     void scrollByVisualRows(int rows);
     void updateScrollBar();
+    void resetWrappedRowIndex();
+    void processWrappedRowIndexChunk();
+    void updateWrappedRowCount(std::size_t line, std::size_t count);
+    [[nodiscard]] std::size_t wrappedRowsBefore(std::size_t line) const noexcept;
+    [[nodiscard]] std::size_t lineAtWrappedRow(std::size_t row) const noexcept;
+    void setWrappedScrollPosition(std::size_t line, std::size_t subrow);
     void invalidateViewport();
 
     const editor::TextBuffer& buffer_;
@@ -139,7 +150,16 @@ private:
     const editor::SelectionManager& selections_;
     EditorRenderConfiguration configuration_;
     qreal horizontalOffset_{};
+    std::size_t firstVisibleLine_{};
     std::size_t firstVisibleSubrow_{};
+    std::vector<std::size_t> wrappedRowsByLine_;
+    std::vector<std::size_t> wrappedRowsTree_;
+    std::size_t wrappedRowsIndexed_{};
+    std::size_t totalVisualRows_{};
+    std::size_t wrappedIndexWidth_{};
+    std::uint64_t observedBufferRevision_{};
+    bool wrappedIndexComplete_{};
+    QTimer wrappedIndexTimer_;
     std::size_t lastPaintedLines_{};
     std::size_t lastPaintedVisualRows_{};
     std::optional<editor::BracketPair> matchingBrackets_;

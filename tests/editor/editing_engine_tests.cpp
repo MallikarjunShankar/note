@@ -2,6 +2,7 @@
 #include "editor/editing_engine.hpp"
 #include "editor/selection_manager.hpp"
 #include "editor/text_buffer.hpp"
+#include "editor/undo_redo_manager.hpp"
 
 #include <array>
 #include <iostream>
@@ -168,6 +169,42 @@ void testOverlappingSelectionsAndLineEndings() {
             "newline preserves line-ending metadata");
 }
 
+void testConfigurableLineIndentationAndUndo() {
+    using note::editor::UndoRedoManager;
+    TextBuffer text("one\ntwo\nthree");
+    CursorManager cursors(text);
+    SelectionManager selections(text);
+    EditingEngine editing(text, cursors, selections);
+    UndoRedoManager history(text, cursors, selections, editing);
+
+    selections.setSelection(0, 0, 8);
+    (void)history.indentLines(false, 2);
+    require(text.text() == "  one\n  two\nthree",
+            "spaces indent every selected line without including an endpoint line");
+    require(history.undo() && text.text() == "one\ntwo\nthree",
+            "selected-line indentation is one undoable operation");
+    require(history.redo() && text.text() == "  one\n  two\nthree",
+            "selected-line indentation redoes atomically");
+
+    (void)history.outdentLines(2);
+    require(text.text() == "one\ntwo\nthree",
+            "selected-line outdent removes one configured space level");
+    require(history.undo() && text.text() == "  one\n  two\nthree",
+            "selected-line outdent is undoable");
+
+    TextBuffer tabs("\tfirst\n  second");
+    CursorManager tabCursors(tabs);
+    SelectionManager tabSelections(tabs);
+    EditingEngine tabEditing(tabs, tabCursors, tabSelections);
+    tabSelections.setSelection(0, 0, tabs.sizeBytes());
+    (void)tabEditing.outdentLines(4);
+    require(tabs.text() == "first\nsecond",
+            "outdent removes one leading tab or one space indentation level");
+    (void)tabEditing.indentLines(true, 4);
+    require(tabs.text() == "\tfirst\n\tsecond",
+            "tab indentation follows the configured style");
+}
+
 } // namespace
 
 int main() {
@@ -178,6 +215,7 @@ int main() {
         testMixedSelectionAndCursorDeletion();
         testInsertAtSelectedCursorIndices();
         testOverlappingSelectionsAndLineEndings();
+        testConfigurableLineIndentationAndUndo();
         std::cout << "All editing engine tests passed.\n";
         return 0;
     } catch (const std::exception& error) {

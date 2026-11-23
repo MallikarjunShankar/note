@@ -44,6 +44,8 @@ public:
         std::size_t offset, std::size_t length,
         std::string_view utf8Text,
         LineEnding bareLineEnding = LineEnding::lf);
+    [[nodiscard]] EditBatch indentLines(bool useTabs, std::size_t width);
+    [[nodiscard]] EditBatch outdentLines(std::size_t width);
 
 private:
     struct PendingEdit {
@@ -60,6 +62,7 @@ private:
     void validateInsertedText(std::string_view utf8Text) const;
     void validateEdits(const std::vector<PendingEdit>& edits) const;
     void rejectOverlaps(const std::vector<PendingEdit>& edits) const;
+    [[nodiscard]] std::vector<std::size_t> selectedLines() const;
 
     TextBuffer& buffer_;
     CursorManager& cursors_;

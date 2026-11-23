@@ -87,6 +87,18 @@ EditBatch UndoRedoManager::replaceRange(std::size_t offset, std::size_t length,
     return finish(std::move(batch), OperationKind::other, before);
 }
 
+EditBatch UndoRedoManager::indentLines(bool useTabs, std::size_t width) {
+    const auto before = captureState();
+    return finish(editing_.indentLines(useTabs, width), OperationKind::other,
+                  before);
+}
+
+EditBatch UndoRedoManager::outdentLines(std::size_t width) {
+    const auto before = captureState();
+    return finish(editing_.outdentLines(width), OperationKind::other,
+                  before);
+}
+
 void UndoRedoManager::beginTransaction() {
     if (openTransaction_) throw std::logic_error("undo transaction already open");
     openTransaction_ = Transaction{};

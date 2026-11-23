@@ -4,6 +4,7 @@
 #include "editor/selection_manager.hpp"
 
 #include <algorithm>
+#include <set>
 #include <stdexcept>
 #include <utility>
 
@@ -139,6 +140,55 @@ EditBatch EditingEngine::replaceRange(std::size_t offset, std::size_t length,
     return apply(std::move(edits), bareLineEnding, false);
 }
 
+EditBatch EditingEngine::indentLines(bool useTabs, std::size_t width) {
+    const auto indentation = useTabs ? std::string("\t")
+        : std::string(std::clamp<std::size_t>(width, 1, 16), ' ');
+    std::vector<PendingEdit> edits;
+    for (const auto line : selectedLines())
+        edits.push_back({buffer_.lineRange(line).begin, 0, indentation});
+    return apply(std::move(edits), LineEnding::lf, false);
+}
+
+EditBatch EditingEngine::outdentLines(std::size_t width) {
+    const auto spacesToRemove = std::clamp<std::size_t>(width, 1, 16);
+    std::vector<PendingEdit> edits;
+    for (const auto line : selectedLines()) {
+        const auto range = buffer_.lineRange(line);
+        std::size_t remove = 0;
+        if (range.begin < range.end &&
+            buffer_.byteAt(range.begin) == static_cast<unsigned char>('\t')) {
+            remove = 1;
+        } else {
+            while (remove < spacesToRemove &&
+                   range.begin + remove < range.end &&
+                   buffer_.byteAt(range.begin + remove) ==
+                       static_cast<unsigned char>(' '))
+                ++remove;
+        }
+        if (remove != 0)
+            edits.push_back({range.begin, remove, {}});
+    }
+    return apply(std::move(edits), LineEnding::lf, false);
+}
+
+std::vector<std::size_t> EditingEngine::selectedLines() const {
+    std::set<std::size_t> lines;
+    bool hasNonemptySelection = false;
+    for (std::size_t index = 0; index < selections_.selectionCount(); ++index) {
+        if (!selections_.hasSelection(index)) continue;
+        hasNonemptySelection = true;
+        const auto range = selections_.normalizedRange(index);
+        const auto first = cursors_.lineAndColumn(range.begin).line;
+        auto last = cursors_.lineAndColumn(range.end).line;
+        if (last > first && buffer_.lineRange(last).begin == range.end)
+            --last;
+        for (auto line = first; line <= last; ++line) lines.insert(line);
+    }
+    if (!hasNonemptySelection)
+        lines.insert(cursors_.lineAndColumn(cursors_.primaryOffset()).line);
+    return {lines.begin(), lines.end()};
+}
+
 std::size_t EditingEngine::previousBoundary(std::size_t offset) const {
     auto result = offset - 1;
     while (result > 0 && !buffer_.isScalarBoundary(result)) --result;
@@ -206,10 +256,12 @@ EditBatch EditingEngine::apply(std::vector<PendingEdit> edits,
     for (const auto& edit : edits) {
         const auto removedText = buffer_.textRange(edit.offset, edit.length);
         TextSnapshot removedSnapshot{removedText, {}};
-        for (std::size_t newline = 0; newline < buffer_.lineCount(); ++newline) {
-            const auto range = buffer_.lineRange(newline);
-            if (range.end >= edit.offset && range.end < edit.offset + edit.length)
-                removedSnapshot.lineEndings.push_back(buffer_.lineEnding(newline));
+        if (removedText.find('\n') != std::string::npos) {
+            for (std::size_t newline = 0; newline < buffer_.lineCount(); ++newline) {
+                const auto range = buffer_.lineRange(newline);
+                if (range.end >= edit.offset && range.end < edit.offset + edit.length)
+                    removedSnapshot.lineEndings.push_back(buffer_.lineEnding(newline));
+            }
         }
         TextBuffer insertedBuffer(edit.insertedText);
         auto insertedSnapshot = insertedBuffer.snapshot();

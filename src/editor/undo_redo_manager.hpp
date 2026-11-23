@@ -34,6 +34,8 @@ public:
         std::size_t offset, std::size_t length,
         std::string_view utf8Text,
         LineEnding bareLineEnding = LineEnding::lf);
+    [[nodiscard]] EditBatch indentLines(bool useTabs, std::size_t width);
+    [[nodiscard]] EditBatch outdentLines(std::size_t width);
 
     void beginTransaction();
     void endTransaction();

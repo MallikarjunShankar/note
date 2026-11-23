@@ -23,6 +23,7 @@ EditorRenderer::EditorRenderer(const editor::TextBuffer& buffer,
     : QAbstractScrollArea(parent), buffer_(buffer), cursors_(cursors),
       selections_(selections) {
     configuration_.font = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+    observedBufferRevision_ = buffer_.revision();
     setFrameShape(QFrame::NoFrame);
     setFocusPolicy(Qt::StrongFocus);
     setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
@@ -30,9 +31,22 @@ EditorRenderer::EditorRenderer(const editor::TextBuffer& buffer,
     verticalScrollBar()->setSingleStep(1);
     connect(verticalScrollBar(), &QScrollBar::valueChanged, this,
             [this] {
-                firstVisibleSubrow_ = 0;
+                if (configuration_.wordWrap) {
+                    const auto row = static_cast<std::size_t>(
+                        std::max(0, verticalScrollBar()->value()));
+                    firstVisibleLine_ = lineAtWrappedRow(row);
+                    firstVisibleSubrow_ =
+                        row - wrappedRowsBefore(firstVisibleLine_);
+                } else {
+                    firstVisibleLine_ = static_cast<std::size_t>(
+                        std::max(0, verticalScrollBar()->value()));
+                    firstVisibleSubrow_ = 0;
+                }
                 viewport()->update();
             });
+    wrappedIndexTimer_.setSingleShot(true);
+    connect(&wrappedIndexTimer_, &QTimer::timeout, this,
+            [this] { processWrappedRowIndexChunk(); });
     updateScrollBar();
 }
 
@@ -40,14 +54,131 @@ const EditorRenderConfiguration& EditorRenderer::configuration() const noexcept 
     return configuration_;
 }
 
+void EditorRenderer::resetWrappedRowIndex() {
+    wrappedIndexTimer_.stop();
+    if (!configuration_.wordWrap) return;
+    const auto previousLine = firstVisibleLine_;
+    const auto lineCount = buffer_.lineCount();
+    wrappedRowsByLine_.assign(lineCount, 1);
+    wrappedRowsTree_.assign(lineCount + 1, 0);
+    for (std::size_t index = 1; index <= lineCount; ++index)
+        wrappedRowsTree_[index] = index & (~index + 1);
+    wrappedRowsIndexed_ = 0;
+    totalVisualRows_ = lineCount;
+    wrappedIndexComplete_ = lineCount == 0;
+    wrappedIndexWidth_ = static_cast<std::size_t>(
+        std::max(0, viewport()->width()));
+    firstVisibleLine_ = lineCount == 0
+                            ? 0
+                            : std::min(previousLine, lineCount - 1);
+    firstVisibleSubrow_ = 0;
+    updateScrollBar();
+    if (lineCount != 0) wrappedIndexTimer_.start(200);
+}
+
+void EditorRenderer::processWrappedRowIndexChunk() {
+    if (!configuration_.wordWrap) return;
+    constexpr std::size_t chunkLines = 64;
+    const auto end = std::min(wrappedRowsByLine_.size(),
+                              wrappedRowsIndexed_ + chunkLines);
+    for (auto line = wrappedRowsIndexed_; line < end; ++line)
+        updateWrappedRowCount(line,
+                              std::max<std::size_t>(1, visualRowCount(line)));
+    wrappedRowsIndexed_ = end;
+    wrappedIndexComplete_ = wrappedRowsIndexed_ == wrappedRowsByLine_.size();
+    updateScrollBar();
+    invalidateViewport();
+    if (!wrappedIndexComplete_) wrappedIndexTimer_.start(1);
+}
+
+void EditorRenderer::updateWrappedRowCount(std::size_t line,
+                                           std::size_t count) {
+    if (line >= wrappedRowsByLine_.size()) return;
+    const auto previous = wrappedRowsByLine_[line];
+    if (previous == count) return;
+    if (count > previous) {
+        const auto difference = count - previous;
+        totalVisualRows_ += difference;
+        for (auto index = line + 1; index < wrappedRowsTree_.size();
+             index += index & (~index + 1))
+            wrappedRowsTree_[index] += difference;
+    } else {
+        const auto difference = previous - count;
+        totalVisualRows_ -= difference;
+        for (auto index = line + 1; index < wrappedRowsTree_.size();
+             index += index & (~index + 1))
+            wrappedRowsTree_[index] -= difference;
+    }
+    wrappedRowsByLine_[line] = count;
+}
+
+std::size_t EditorRenderer::wrappedRowsBefore(std::size_t line) const noexcept {
+    auto index = std::min(line, wrappedRowsTree_.size() - 1);
+    std::size_t total = 0;
+    while (index != 0) {
+        total += wrappedRowsTree_[index];
+        index -= index & (~index + 1);
+    }
+    return total;
+}
+
+std::size_t EditorRenderer::lineAtWrappedRow(std::size_t row) const noexcept {
+    const auto count = wrappedRowsByLine_.size();
+    if (count == 0) return 0;
+    std::size_t index = 0;
+    std::size_t bit = 1;
+    while (bit < count && bit <= std::numeric_limits<std::size_t>::max() / 2)
+        bit <<= 1;
+    for (; bit != 0; bit >>= 1) {
+        const auto candidate = index + bit;
+        if (candidate <= count && wrappedRowsTree_[candidate] <= row) {
+            index = candidate;
+            row -= wrappedRowsTree_[candidate];
+        }
+    }
+    return std::min(index, count - 1);
+}
+
+void EditorRenderer::setWrappedScrollPosition(std::size_t line,
+                                              std::size_t subrow) {
+    if (wrappedRowsByLine_.empty()) {
+        firstVisibleLine_ = 0;
+        firstVisibleSubrow_ = 0;
+        updateScrollBar();
+        return;
+    }
+    firstVisibleLine_ = std::min(line, wrappedRowsByLine_.size() - 1);
+    const auto rowCount = wrappedIndexComplete_
+        ? wrappedRowsByLine_[firstVisibleLine_]
+        : visualRowCount(firstVisibleLine_);
+    firstVisibleSubrow_ = std::min(
+        subrow, rowCount - 1);
+    updateScrollBar();
+    viewport()->update();
+}
+
 void EditorRenderer::setConfiguration(EditorRenderConfiguration configuration) {
     if (configuration.tabWidth < 1) configuration.tabWidth = 1;
     if (configuration.font.family().isEmpty())
         configuration.font = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+    const bool wrappedLayoutChanged =
+        configuration.wordWrap != configuration_.wordWrap ||
+        configuration.font != configuration_.font ||
+        configuration.tabWidth != configuration_.tabWidth ||
+        configuration.lineHeight != configuration_.lineHeight ||
+        configuration.lineNumbers != configuration_.lineNumbers;
     configuration_ = std::move(configuration);
     firstVisibleSubrow_ = 0;
     if (configuration_.wordWrap) {
         horizontalOffset_ = 0;
+        if (wrappedLayoutChanged) resetWrappedRowIndex();
+    } else {
+        wrappedIndexTimer_.stop();
+        wrappedRowsByLine_.clear();
+        wrappedRowsTree_.clear();
+        wrappedRowsIndexed_ = 0;
+        totalVisualRows_ = 0;
+        wrappedIndexComplete_ = false;
     }
     updateScrollBar();
     invalidateViewport();
@@ -58,7 +189,10 @@ VisibleLineRange EditorRenderer::visibleLineRange() const noexcept {
 }
 
 std::size_t EditorRenderer::firstVisibleLine() const noexcept {
-    return static_cast<std::size_t>(verticalScrollBar()->value());
+    return configuration_.wordWrap
+               ? firstVisibleLine_
+               : static_cast<std::size_t>(
+                     std::max(0, verticalScrollBar()->value()));
 }
 
 std::size_t EditorRenderer::firstVisibleSubrow() const noexcept {
@@ -92,11 +226,24 @@ std::size_t EditorRenderer::visualRowCount(std::size_t line) const {
     return static_cast<std::size_t>(layoutLine(line).rows.size());
 }
 
+std::size_t EditorRenderer::totalVisualRowCount() const noexcept {
+    return configuration_.wordWrap ? totalVisualRows_ : buffer_.lineCount();
+}
+
+bool EditorRenderer::wrappedRowIndexComplete() const noexcept {
+    return !configuration_.wordWrap || wrappedIndexComplete_;
+}
+
 void EditorRenderer::scrollToLine(std::size_t line) {
-    const auto maximum = verticalScrollBar()->maximum();
-    firstVisibleSubrow_ = 0;
-    verticalScrollBar()->setValue(static_cast<int>(
-        std::min<std::size_t>(line, static_cast<std::size_t>(maximum))));
+    if (configuration_.wordWrap) {
+        setWrappedScrollPosition(line, 0);
+    } else {
+        firstVisibleLine_ = line;
+        firstVisibleSubrow_ = 0;
+        verticalScrollBar()->setValue(static_cast<int>(
+            std::min<std::size_t>(line, static_cast<std::size_t>(
+                std::max(0, verticalScrollBar()->maximum())))));
+    }
     viewport()->update();
 }
 
@@ -190,20 +337,12 @@ void EditorRenderer::ensureCursorVisible(std::size_t offset) {
         }
 
         if (screenRow < 0) {
-            firstVisibleSubrow_ = cursorRow;
-            viewport()->update();
+            setWrappedScrollPosition(location.line, cursorRow);
         } else if (screenRow >= static_cast<std::ptrdiff_t>(viewportRows)) {
             const auto desired = cursorRow >= viewportRows
                                      ? cursorRow - viewportRows + 1
                                      : 0;
-            if (location.line == firstVisibleLine()) {
-                firstVisibleSubrow_ = desired;
-                viewport()->update();
-            } else {
-                scrollToLine(location.line);
-                firstVisibleSubrow_ = desired;
-                viewport()->update();
-            }
+            setWrappedScrollPosition(location.line, desired);
         }
     }
 
@@ -221,6 +360,10 @@ void EditorRenderer::ensureCursorVisible(std::size_t offset) {
 }
 
 void EditorRenderer::refreshFromModel() {
+    if (observedBufferRevision_ != buffer_.revision()) {
+        observedBufferRevision_ = buffer_.revision();
+        if (configuration_.wordWrap) resetWrappedRowIndex();
+    }
     updateScrollBar();
     if (configuration_.wordWrap) {
         firstVisibleSubrow_ = std::min(
@@ -907,16 +1050,42 @@ void EditorRenderer::updateScrollBar() {
     const auto rows = std::max(1, (viewport()->height() + effectiveLineHeight() - 1) /
                                       effectiveLineHeight());
     const auto lineCount = buffer_.lineCount();
-    const auto maximum = configuration_.wordWrap
-                             ? lineCount - 1
-                             : (lineCount > static_cast<std::size_t>(rows)
-                                    ? lineCount -
-                                          static_cast<std::size_t>(rows)
-                                    : 0);
+    const auto totalRows = configuration_.wordWrap
+                               ? std::max<std::size_t>(1, totalVisualRows_)
+                               : lineCount;
+    const auto maximum = totalRows > static_cast<std::size_t>(rows)
+                             ? totalRows - static_cast<std::size_t>(rows)
+                             : 0;
     verticalScrollBar()->setRange(
         0, static_cast<int>(std::min<std::size_t>(
                maximum, static_cast<std::size_t>(std::numeric_limits<int>::max()))));
     verticalScrollBar()->setPageStep(rows);
+    if (configuration_.wordWrap) {
+        if (lineCount == 0) {
+            firstVisibleLine_ = 0;
+            firstVisibleSubrow_ = 0;
+            verticalScrollBar()->setValue(0);
+            return;
+        }
+        firstVisibleLine_ = std::min(firstVisibleLine_, lineCount - 1);
+        const auto currentLineRows = wrappedIndexComplete_
+            ? wrappedRowsByLine_[firstVisibleLine_]
+            : visualRowCount(firstVisibleLine_);
+        firstVisibleSubrow_ = std::min(
+            firstVisibleSubrow_,
+            currentLineRows - 1);
+        const auto position = wrappedRowsBefore(firstVisibleLine_) +
+                              firstVisibleSubrow_;
+        const auto maximum = static_cast<std::size_t>(
+            std::max(0, verticalScrollBar()->maximum()));
+        if (wrappedIndexComplete_ || position <= maximum)
+            verticalScrollBar()->setValue(static_cast<int>(
+                std::min(position, maximum)));
+    } else {
+        verticalScrollBar()->setValue(static_cast<int>(std::min<std::size_t>(
+            firstVisibleLine_, static_cast<std::size_t>(
+                                   std::max(0, verticalScrollBar()->maximum())))));
+    }
 }
 
 void EditorRenderer::invalidateViewport() {
@@ -928,40 +1097,49 @@ void EditorRenderer::scrollByVisualRows(int rows) {
         verticalScrollBar()->setValue(verticalScrollBar()->value() + rows);
         return;
     }
-    auto line = firstVisibleLine();
-    auto rowCount = visualRowCount(line);
-    while (rows > 0) {
-        if (firstVisibleSubrow_ + 1 < rowCount) {
-            ++firstVisibleSubrow_;
-            --rows;
-        } else if (line < buffer_.lineCount() - 1) {
-            ++line;
-            verticalScrollBar()->setValue(static_cast<int>(line));
-            rowCount = visualRowCount(line);
-            --rows;
-        } else {
-            break;
+    if (!wrappedIndexComplete_) {
+        auto line = firstVisibleLine_;
+        auto subrow = firstVisibleSubrow_;
+        while (rows > 0) {
+            const auto count = visualRowCount(line);
+            if (subrow + 1 < count) {
+                ++subrow;
+                --rows;
+            } else if (line + 1 < buffer_.lineCount()) {
+                ++line;
+                subrow = 0;
+                --rows;
+            } else {
+                break;
+            }
         }
-    }
-    while (rows < 0) {
-        if (firstVisibleSubrow_ > 0) {
-            --firstVisibleSubrow_;
-            ++rows;
-        } else if (line > 0) {
-            --line;
-            verticalScrollBar()->setValue(static_cast<int>(line));
-            rowCount = visualRowCount(line);
-            firstVisibleSubrow_ = rowCount - 1;
-            ++rows;
-        } else {
-            break;
+        while (rows < 0) {
+            if (subrow != 0) {
+                --subrow;
+                ++rows;
+            } else if (line != 0) {
+                --line;
+                subrow = visualRowCount(line) - 1;
+                ++rows;
+            } else {
+                break;
+            }
         }
+        firstVisibleLine_ = line;
+        firstVisibleSubrow_ = subrow;
+        viewport()->update();
+        return;
     }
+    verticalScrollBar()->setValue(verticalScrollBar()->value() + rows);
     viewport()->update();
 }
 
 void EditorRenderer::resizeEvent(QResizeEvent* event) {
     QAbstractScrollArea::resizeEvent(event);
+    if (configuration_.wordWrap &&
+        wrappedIndexWidth_ != static_cast<std::size_t>(
+                                  std::max(0, viewport()->width())))
+        resetWrappedRowIndex();
     updateScrollBar();
     if (configuration_.wordWrap) {
         firstVisibleSubrow_ = std::min(

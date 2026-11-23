@@ -6,6 +6,9 @@
 #include <QApplication>
 #include <QCoreApplication>
 #include <QImage>
+#include <QEventLoop>
+#include <QScrollBar>
+#include <QTimer>
 #include <QWheelEvent>
 
 #include <iostream>
@@ -285,6 +288,53 @@ void testWordWrappingAndWrappedGeometry() {
             "Unicode wrapped hit testing preserves UTF-8 scalar boundaries");
 }
 
+void testWrappedScrollbarUsesVisualRows() {
+    TextBuffer text("abcdefghijabcdefghij\nshort\n"
+                    "klmnopqrstklmnopqrst\nanother\n"
+                    "uvwxyzuvwxyzuvwxyz\nlast");
+    CursorManager cursors(text);
+    SelectionManager selections(text);
+    EditorRenderer renderer(text, cursors, selections);
+    renderer.resize(105, 72);
+    auto configuration = renderer.configuration();
+    configuration.lineNumbers = false;
+    configuration.lineHeight = 18;
+    configuration.wordWrap = true;
+    renderer.setConfiguration(configuration);
+    renderer.show();
+
+    QEventLoop wait;
+    QTimer poll;
+    poll.setInterval(2);
+    QObject::connect(&poll, &QTimer::timeout, &wait, [&] {
+        if (renderer.wrappedRowIndexComplete()) wait.quit();
+    });
+    QTimer::singleShot(3000, &wait, &QEventLoop::quit);
+    poll.start();
+    wait.exec();
+    require(renderer.wrappedRowIndexComplete(),
+            "wrapped row index completes incrementally");
+
+    std::size_t expectedRows = 0;
+    for (std::size_t line = 0; line < text.lineCount(); ++line)
+        expectedRows += renderer.visualRowCount(line);
+    require(renderer.totalVisualRowCount() == expectedRows,
+            "wrapped row index counts all visual rows");
+    const auto viewportRows = static_cast<std::size_t>(
+        (renderer.viewport()->height() + configuration.lineHeight - 1) /
+        configuration.lineHeight);
+    const auto expectedMaximum = expectedRows > viewportRows
+        ? expectedRows - viewportRows : 0;
+    require(static_cast<std::size_t>(
+                renderer.verticalScrollBar()->maximum()) == expectedMaximum &&
+                renderer.verticalScrollBar()->pageStep() ==
+                    static_cast<int>(viewportRows),
+            "wrapped scrollbar range and thumb page size use visual rows");
+    renderer.scrollToLine(2);
+    require(renderer.firstVisibleLine() == 2,
+            "scrollbar visual-row mapping retains logical line navigation");
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -297,6 +347,7 @@ int main(int argc, char** argv) {
         testTextGeometryRespectsLineNumberGutter();
         testPresentationDecorationsAndOccurrences();
         testWordWrappingAndWrappedGeometry();
+        testWrappedScrollbarUsesVisualRows();
         std::cout << "All editor renderer tests passed.\n";
         return 0;
     } catch (const std::exception& error) {
