@@ -36,14 +36,10 @@ NOTE is under active development.
 
 Current development priorities include:
 
-- Core document and file management.
-- Production text editing engine.
-- Cursor and selection management.
-- Command, customisation and search system integration.
-- Essential coding conveniences.
-- Theme and customisation system.
-- Command palette and keyboard shortcuts.
-- Session restoration and recovery.
+- Completing and integrating application, editor, document and platform behavior.
+- Validating settings, themes, commands, search, session restoration and recovery together.
+- Windows-first release preparation while preserving cross-platform system boundaries.
+- Measuring integrated V1 performance on an owner-approved reference device.
 
 These are development goals, not a claim that all features are currently implemented.
 

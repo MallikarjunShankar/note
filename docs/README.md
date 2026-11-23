@@ -4,7 +4,7 @@
 
 ## Current state
 
-The CMake C++20/Qt 6 Widgets application implements Phase 02 document workflows and per-document project-owned editing views. Core editor input includes multi-cursor editing and configurable bracket/quote completion with nested matching; Phase 02 remains partial pending focused verification, cross-platform validation, and performance benchmarking. Recovery and remaining V1 editor features are outstanding. Current performance numbers are host-specific evidence, not production guarantees or proof of the low-end budget.
+The CMake C++20/Qt 6 Widgets application has partial implementations across document workflows, per-document editing views, shared commands/keybindings, customisation/search, and session recovery. Configurable indentation, wrapped-row scrollbar indexing, persistent presentation settings, transient theme preview, and platform-facing file workflows have focused Windows/offscreen coverage. V1 remains incomplete pending broader validation, owner decisions and release preparation. Current performance numbers are host-specific evidence, not production guarantees or proof of the low-end budget.
 
 ## Documents
 
@@ -17,5 +17,6 @@ The CMake C++20/Qt 6 Widgets application implements Phase 02 document workflows 
 - [Document subsystem interfaces](INTERFACES.md)
 - [Production document benchmarks](../benchmarks/document_foundation/README.md)
 - [System boundaries](SYSTEMS.md)
+- [Default shortcuts](DEFAULT_SHORTCUTS.md)
 - [Open technical decisions](DECISIONS.md)
 - [Development plan](DEVELOPMENT_PLAN.md)

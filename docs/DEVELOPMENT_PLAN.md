@@ -17,14 +17,14 @@ Performance is fundamental throughout development. Sensible, contained optimisat
 
 The isolated architecture prototype is complete as a research milestone; it is not production editor functionality.
 
-The application currently has partial implementation for the application shell, document lifecycle, text editing and platform-facing file behavior:
+The application currently has partial implementation across the application shell, document lifecycle, text editing, customisation, commands/search, session recovery and platform-facing file behavior:
 
 - CMake/C++20/Qt 6 production shell work is in place on the development Windows host.
 - Production UTF-8 piece-table editing, document ownership, tab identity, workflow, native dialogs and chunked Qt file service behavior exist.
-- Project-owned viewport rendering, cursor/selection management, undo/redo, pairing, indentation and presentation settings are in progress.
-- Focused Windows Debug tests pass, but reference-device, cross-platform and real-display validation remain incomplete.
-- System 09 now has atomic session persistence, path/order/active/cursor restoration, unclean-run detection, separate dirty-buffer snapshots and explicit recovery choices integrated with Application Core. UI lifecycle, platform and durability validation remain.
-- Systems 06–08 have integrated implementation in progress; broader UI and runtime validation remain.
+- Project-owned viewport rendering, cursor/selection management, undo/redo, pairing, configurable line indentation, wrapped-row scrollbar indexing and presentation settings are integrated, with offscreen coverage.
+- Systems 06–08 have a shared command, keybinding, customisation and search implementation. Settings and theme previews apply to existing editor views without replacing buffers.
+- System 09 has atomic session persistence, path/order/active/cursor restoration, unclean-run detection, separate dirty-buffer snapshots and explicit recovery choices integrated with Application Core.
+- The Windows Debug build and current CTest suite pass (15/15), but reference-device, cross-platform, real-display, broader lifecycle and release validation remain incomplete.
 
 Measured current-host performance and technical evidence remain in [`PERFORMANCE.md`](PERFORMANCE.md). Historical partial or complete evidence does not waive unresolved acceptance gates.
 
@@ -61,10 +61,10 @@ Implementation proceeds in the following integrated packages. Dependencies must 
 **Systems:** outstanding work in 01–04 and 10.
 
 - Complete application bootstrap, shared state, resource handling and lifecycle coordination.
-- Complete UI behavior, persistent presentation settings, wrapped scrollbar behavior and real-view validation.
+- Complete UI behavior, persistent presentation settings, wrapped scrollbar behavior and real-display validation.
 - Complete core editor behavior, indentation/configuration and reference-device validation.
 - Complete document-management edge cases, progressive usability and platform validation.
-- Complete drag/drop, external-app behavior and filesystem integration behind common interfaces.
+- Complete drag/drop, external-app behavior and filesystem integration behind common interfaces; report failures without silently ignoring them.
 - Build and smoke-test shared behavior without Windows-only assumptions.
 
 **Dependencies:** all prior work uses existing ownership boundaries and does not move document/editor/file state into the UI or engine.
