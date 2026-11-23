@@ -7,6 +7,7 @@
 #include <QAction>
 #include <QAbstractButton>
 #include <QApplication>
+#include <QCheckBox>
 #include <QClipboard>
 #include <QContextMenuEvent>
 #include <QDialog>
@@ -28,6 +29,7 @@
 #include <QPushButton>
 #include <QTemporaryDir>
 #include <QTabBar>
+#include <QSpinBox>
 #include <QStackedWidget>
 #include <QTimer>
 
@@ -115,6 +117,61 @@ int main(int argc, char* argv[]) {
                 explained = explained || label->text() == QStringLiteral("Conflict with File: Save");
             require(explained && keys.binding("file.open") == QKeySequence(Qt::CTRL | Qt::Key_O),
                     "conflicting shortcut is rejected and names the other command");
+        }
+        {
+            // Customisation controls the model supported but Settings did not expose.
+            QTemporaryDir storage;
+            require(storage.isValid(), "customisation fixture directory");
+            note::customisation::SettingsManager settings(storage.filePath(QStringLiteral("s.ini")));
+            note::customisation::ThemeManager themes(storage.filePath(QStringLiteral("themes")));
+            note::commands::KeybindingManager keys(storage.filePath(QStringLiteral("k.ini")));
+            note::commands::CommandRegistry registry;
+            registry.registerCommand({"file.new", "New", "File", "New"}, [] {});
+            registry.registerCommand({"file.save", "Save", "File", "Save"}, [] {});
+            registry.registerCommand({"search.find", "Find", "Search", "Find"}, [] {});
+            note::ui::SettingsDialog dialog(settings, themes, keys, {}, nullptr, &registry);
+            auto* round = dialog.findChild<QCheckBox*>(QStringLiteral("pair_round"));
+            auto* single = dialog.findChild<QCheckBox*>(QStringLiteral("pair_singleQuote"));
+            auto* weight = dialog.findChild<QSpinBox*>(QStringLiteral("fontWeight"));
+            auto* toolbarList = dialog.findChild<QListWidget*>(QStringLiteral("toolbarCommands"));
+            auto* cursor = dialog.findChild<QLineEdit*>(QStringLiteral("themeColour_cursor"));
+            auto* border = dialog.findChild<QLineEdit*>(QStringLiteral("themeColour_border"));
+            auto* name = dialog.findChild<QLineEdit*>();
+            QLineEdit* themeName = nullptr;
+            for (auto* line : dialog.findChildren<QLineEdit*>())
+                if (line->text() == settings.settings().themeName && !line->objectName().startsWith("theme"))
+                    themeName = line;
+            auto* reset = dialog.findChild<QPushButton*>(QStringLiteral("resetThemeValues"));
+            int colourRows = 0;
+            for (auto* line : dialog.findChildren<QLineEdit*>())
+                colourRows += line->objectName().startsWith(QStringLiteral("themeColour_"));
+            require(round && single && weight && toolbarList && toolbarList->count() == 3 &&
+                        cursor && border && name && themeName && reset &&
+                        colourRows == static_cast<int>(note::customisation::themeColourFields().size()),
+                    "settings expose pairing, weight, toolbar, every theme colour and reset");
+            const auto savedCursor = cursor->text();
+            cursor->setText(QStringLiteral("#abcdef"));
+            reset->click();
+            require(cursor->text() == savedCursor, "Reset Theme Values discards unsaved colour edits");
+
+            round->setChecked(false);
+            weight->setValue(700);
+            for (int index = 0; index < toolbarList->count(); ++index)
+                toolbarList->item(index)->setCheckState(
+                    index == 1 ? Qt::Checked : Qt::Unchecked);
+            themeName->setText(QStringLiteral("Mine"));
+            border->setText(QStringLiteral("#123456"));
+            for (auto* button : dialog.findChildren<QAbstractButton*>())
+                if (button->text() == QStringLiteral("&Apply") || button->text() == QStringLiteral("Apply"))
+                    button->click();
+            const auto& applied = settings.settings();
+            require(!applied.pairing.at("round") && applied.pairing.at("singleQuote") &&
+                        applied.fontWeight == 700 &&
+                        applied.toolbarActions == QStringList{QStringLiteral("file.save")},
+                    "pairing, font weight and toolbar contents apply from Settings");
+            require(applied.themeName == QStringLiteral("Mine") &&
+                        themes.loadTheme(QStringLiteral("Mine")).border == QColor("#123456"),
+                    "a newly editable theme colour is saved with the custom theme");
         }
         {
             // Find Next after editing with the Find dialog closed must use fresh offsets.
@@ -733,7 +790,7 @@ int main(int argc, char* argv[]) {
                 QApplication::activeModalWidget());
             auto* background = dialog
                 ? dialog->findChild<QLineEdit*>(
-                      QStringLiteral("themeBackgroundColour"))
+                      QStringLiteral("themeColour_background"))
                 : nullptr;
             if (background) {
                 background->setText(QStringLiteral("#010203"));

@@ -630,15 +630,22 @@ void MainWindow::applyCustomisation() {
     palette.setColor(QPalette::Highlight, theme.selection);
     palette.setColor(QPalette::HighlightedText, theme.foreground);
     palette.setColor(QPalette::Button, theme.menu);
-    palette.setColor(QPalette::ButtonText, theme.foreground);
+    palette.setColor(QPalette::ButtonText, theme.interfaceText);
+    palette.setColor(QPalette::WindowText, theme.interfaceText);
+    palette.setColor(QPalette::Mid, theme.border);
     setPalette(palette);
     setStyleSheet(QStringLiteral(
         "QMenuBar, QMenu, QToolBar { background-color: %1; color: %2; }"
-        "QStatusBar { background-color: %5; color: %2; }"
-        "QTabBar::tab { background: %3; color: %2; }"
+        "QMenu { border: 1px solid %7; }"
+        "QMenu::separator { height: 1px; background: %7; }"
+        "QToolBar { border-bottom: 1px solid %7; }"
+        "QStatusBar { background-color: %5; color: %2; border-top: 1px solid %7; }"
+        "QTabBar { background: %6; }"
+        "QTabBar::tab { background: %3; color: %2; border: 1px solid %7; padding: 4px 10px; }"
         "QTabBar::tab:selected { background: %4; }")
-        .arg(theme.menu.name(), theme.foreground.name(),
-             theme.tab.name(), theme.activeTab.name(), theme.status.name()));
+        .arg(theme.menu.name(), theme.interfaceText.name(),
+             theme.tab.name(), theme.activeTab.name(), theme.status.name(),
+             theme.tabBar.name(), theme.border.name()));
     const std::pair<const char*, bool> presentationCommands[] = {
         {"view.lineNumbers", value.lineNumbers},
         {"view.whitespace", value.whitespaceVisible},

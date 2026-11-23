@@ -5,6 +5,7 @@
 #include <QString>
 
 #include <optional>
+#include <span>
 #include <unordered_map>
 #include <vector>
 
@@ -17,6 +18,9 @@ struct NoteTheme {
     QColor tab;
     QColor activeTab;
     QColor status;
+    QColor tabBar;
+    QColor border;
+    QColor interfaceText;
     QColor foreground;
     QColor background;
     QColor cursor;
@@ -31,6 +35,15 @@ struct NoteTheme {
     QColor searchMatch;
     std::unordered_map<std::string, QColor> syntaxColours;
 };
+
+// Every editable theme colour: JSON key, user-facing label and member. Load,
+// save, export and the theme editor all iterate this one table.
+struct ThemeColourField {
+    const char* key;
+    const char* label;
+    QColor NoteTheme::*member;
+};
+[[nodiscard]] std::span<const ThemeColourField> themeColourFields();
 
 class ThemeManager final : public QObject {
     Q_OBJECT

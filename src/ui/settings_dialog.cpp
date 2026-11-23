@@ -1,6 +1,8 @@
 #include "ui/settings_dialog.hpp"
 
 #include <QCheckBox>
+#include <QColorDialog>
+#include <QListWidget>
 #include <QComboBox>
 #include <QDialogButtonBox>
 #include <QFileDialog>
@@ -62,6 +64,12 @@ SettingsDialog::SettingsDialog(customisation::SettingsManager& settings,
     fontSize->setRange(6, 72);
     fontSize->setValue(settings_.settings().fontSize);
     appearanceLayout->addRow(tr("Font size"), fontSize);
+    auto* fontWeight = new QSpinBox(appearance);
+    fontWeight->setObjectName(QStringLiteral("fontWeight"));
+    fontWeight->setRange(100, 900);
+    fontWeight->setSingleStep(100);
+    fontWeight->setValue(settings_.settings().fontWeight);
+    appearanceLayout->addRow(tr("Font weight"), fontWeight);
     auto* lineSpacing = new QSpinBox(appearance);
     lineSpacing->setRange(80, 200);
     lineSpacing->setSuffix("%");
@@ -85,6 +93,26 @@ SettingsDialog::SettingsDialog(customisation::SettingsManager& settings,
     layoutForm->addRow(statusBar);
     layoutForm->addRow(menuVisible);
     layoutForm->addRow(toolbar);
+    // Toolbar contents: checked commands, in command-registry order.
+    auto* toolbarCommands = new QListWidget(layoutPage);
+    toolbarCommands->setObjectName(QStringLiteral("toolbarCommands"));
+    toolbarCommands->setAccessibleName(tr("Toolbar commands"));
+    if (commandNames) {
+        for (const auto& command : commandNames->commands()) {
+            const auto id = QString::fromStdString(command.id);
+            auto* item = new QListWidgetItem(
+                QStringLiteral("%1: %2").arg(QString::fromStdString(command.category),
+                                             QString::fromStdString(command.text)),
+                toolbarCommands);
+            item->setData(Qt::UserRole, id);
+            item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+            item->setCheckState(settings_.settings().toolbarActions.contains(id)
+                                    ? Qt::Checked : Qt::Unchecked);
+        }
+    }
+    toolbarCommands->setEnabled(toolbar->isChecked());
+    connect(toolbar, &QCheckBox::toggled, toolbarCommands, &QWidget::setEnabled);
+    layoutForm->addRow(tr("Toolbar commands"), toolbarCommands);
     tabs->addTab(layoutPage, tr("Layout"));
 
     auto* editing = new QWidget(tabs);
@@ -115,6 +143,20 @@ SettingsDialog::SettingsDialog(customisation::SettingsManager& settings,
     editingForm->addRow(tr("Indentation"), indentStyle);
     editingForm->addRow(tr("Indent width"), indentWidth);
     editingForm->addRow(pairing);
+    const std::pair<const char*, QString> pairKinds[] = {
+        {"round", tr("Pair ( )")}, {"square", tr("Pair [ ]")}, {"curly", tr("Pair { }")},
+        {"doubleQuote", tr("Pair \" \"")}, {"singleQuote", tr("Pair ' '")}};
+    std::vector<std::pair<std::string, QCheckBox*>> pairBoxes;
+    for (const auto& [key, label] : pairKinds) {
+        auto* box = new QCheckBox(label, editing);
+        box->setObjectName(QStringLiteral("pair_%1").arg(QLatin1String(key)));
+        const auto found = settings_.settings().pairing.find(key);
+        box->setChecked(found == settings_.settings().pairing.end() || found->second);
+        box->setEnabled(pairing->isChecked());
+        connect(pairing, &QCheckBox::toggled, box, &QWidget::setEnabled);
+        editingForm->addRow(box);
+        pairBoxes.emplace_back(key, box);
+    }
     editingForm->addRow(whitespace);
     editingForm->addRow(guides);
     editingForm->addRow(currentLine);
@@ -129,55 +171,67 @@ SettingsDialog::SettingsDialog(customisation::SettingsManager& settings,
     auto* themeName = new QLineEdit(themePage);
     themeName->setText(settings_.settings().themeName);
     themeForm->addRow(tr("Custom theme name"), themeName);
-    auto* windowColour = new QLineEdit(themePage);
-    auto* foregroundColour = new QLineEdit(themePage);
-    auto* backgroundColour = new QLineEdit(themePage);
-    auto* selectionColour = new QLineEdit(themePage);
-    backgroundColour->setObjectName(QStringLiteral("themeBackgroundColour"));
-    const auto activeTheme = themes_.loadTheme(settings_.settings().themeName);
-    windowColour->setText(activeTheme.window.name());
-    foregroundColour->setText(activeTheme.foreground.name());
-    backgroundColour->setText(activeTheme.background.name());
-    selectionColour->setText(activeTheme.selection.name());
-    themeForm->addRow(tr("Window"), windowColour);
-    themeForm->addRow(tr("Foreground"), foregroundColour);
-    themeForm->addRow(tr("Background"), backgroundColour);
-    themeForm->addRow(tr("Selection"), selectionColour);
-    const auto preview = [this, theme, themeName, windowColour, foregroundColour,
-                          backgroundColour, selectionColour] {
+    // One row per theme colour: any QColor name, or Pick for a colour dialog.
+    std::vector<std::pair<const customisation::ThemeColourField*, QLineEdit*>> colourEdits;
+    for (const auto& field : customisation::themeColourFields()) {
+        auto* row = new QWidget(themePage);
+        auto* rowLayout = new QHBoxLayout(row);
+        rowLayout->setContentsMargins(0, 0, 0, 0);
+        auto* edit = new QLineEdit(row);
+        edit->setObjectName(QStringLiteral("themeColour_%1").arg(QLatin1String(field.key)));
+        edit->setAccessibleName(tr(field.label));
+        auto* pick = new QPushButton(tr("Pick..."), row);
+        pick->setAccessibleName(tr("Pick colour: %1").arg(tr(field.label)));
+        rowLayout->addWidget(edit);
+        rowLayout->addWidget(pick);
+        themeForm->addRow(tr(field.label), row);
+        connect(pick, &QPushButton::clicked, this, [this, edit, label = field.label] {
+            const auto colour = QColorDialog::getColor(QColor(edit->text()), this, tr(label));
+            if (colour.isValid()) edit->setText(colour.name());
+        });
+        colourEdits.emplace_back(&field, edit);
+    }
+    const auto fillColours = [colourEdits](const customisation::NoteTheme& value) {
+        for (const auto& [field, edit] : colourEdits) {
+            const QSignalBlocker block(edit);
+            edit->setText((value.*(field->member)).name());
+        }
+    };
+    const auto readColours = [colourEdits](customisation::NoteTheme& value) {
+        for (const auto& [field, edit] : colourEdits) {
+            const QColor colour(edit->text());
+            if (colour.isValid()) value.*(field->member) = colour;
+        }
+    };
+    fillColours(themes_.loadTheme(settings_.settings().themeName));
+    const auto preview = [this, theme, themeName, readColours] {
         auto value = themes_.loadTheme(theme->currentText());
         value.name = themeName->text().isEmpty() ? value.name : themeName->text();
-        if (QColor(windowColour->text()).isValid())
-            value.window = QColor(windowColour->text());
-        if (QColor(foregroundColour->text()).isValid())
-            value.foreground = QColor(foregroundColour->text());
-        if (QColor(backgroundColour->text()).isValid())
-            value.background = QColor(backgroundColour->text());
-        if (QColor(selectionColour->text()).isValid())
-            value.selection = QColor(selectionColour->text());
+        readColours(value);
         (void)themes_.setPreviewTheme(std::move(value));
     };
     connect(themeName, &QLineEdit::textChanged, this, preview);
-    connect(windowColour, &QLineEdit::textChanged, this, preview);
-    connect(foregroundColour, &QLineEdit::textChanged, this, preview);
-    connect(backgroundColour, &QLineEdit::textChanged, this, preview);
-    connect(selectionColour, &QLineEdit::textChanged, this, preview);
-    connect(theme, &QComboBox::currentTextChanged, this,
-            [this, themeName, windowColour, foregroundColour,
-             backgroundColour, selectionColour, preview](const QString& name) {
+    for (const auto& [field, edit] : colourEdits)
+        connect(edit, &QLineEdit::textChanged, this, preview);
+    const auto showSavedTheme = [this, themeName, fillColours](const QString& name) {
         themes_.clearPreviewTheme();
-        const auto selected = themes_.loadTheme(name);
+        const auto saved = themes_.loadTheme(name);
         const QSignalBlocker blockName(themeName);
-        const QSignalBlocker blockWindow(windowColour);
-        const QSignalBlocker blockForeground(foregroundColour);
-        const QSignalBlocker blockBackground(backgroundColour);
-        const QSignalBlocker blockSelection(selectionColour);
-        themeName->setText(selected.name);
-        windowColour->setText(selected.window.name());
-        foregroundColour->setText(selected.foreground.name());
-        backgroundColour->setText(selected.background.name());
-        selectionColour->setText(selected.selection.name());
+        themeName->setText(saved.name);
+        fillColours(saved);
+    };
+    connect(theme, &QComboBox::currentTextChanged, this,
+            [showSavedTheme, preview](const QString& name) {
+        showSavedTheme(name);
         preview();
+    });
+    auto* resetTheme = new QPushButton(tr("Reset Theme Values"), themePage);
+    resetTheme->setObjectName(QStringLiteral("resetThemeValues"));
+    themeForm->addRow(resetTheme);
+    connect(resetTheme, &QPushButton::clicked, this, [this, theme, showSavedTheme, feedback] {
+        showSavedTheme(theme->currentText()); // discard unsaved colour edits
+        feedback->setText(tr("Theme values reset."));
+        if (applyCallback_) applyCallback_();
     });
     auto* importTheme = new QPushButton(tr("Import Theme"), themePage);
     auto* exportTheme = new QPushButton(tr("Export Theme"), themePage);
@@ -255,17 +309,14 @@ SettingsDialog::SettingsDialog(customisation::SettingsManager& settings,
         if (theme->findText(imported) < 0) theme->addItem(imported);
         theme->setCurrentText(imported);
     });
-    connect(exportTheme, &QPushButton::clicked, this, [this, theme, themeName, feedback,
-            windowColour, foregroundColour, backgroundColour, selectionColour] {
+    connect(exportTheme, &QPushButton::clicked, this,
+            [this, theme, themeName, feedback, readColours] {
         const auto path = QFileDialog::getSaveFileName(this, tr("Export Theme"), {},
                                                         tr("Note Themes (*.json)"));
         if (path.isEmpty()) return;
         auto exported = themes_.loadTheme(theme->currentText());
         exported.name = themeName->text();
-        exported.window = QColor(windowColour->text());
-        exported.foreground = QColor(foregroundColour->text());
-        exported.background = QColor(backgroundColour->text());
-        exported.selection = QColor(selectionColour->text());
+        readColours(exported);
         feedback->setText(themes_.exportTheme(exported, path)
             ? tr("Theme exported.")
             : tr("The theme could not be exported."));
@@ -276,23 +327,32 @@ SettingsDialog::SettingsDialog(customisation::SettingsManager& settings,
         QDialogButtonBox::Cancel, this);
     layout->addWidget(buttons);
 
-    const auto applySettings = [this, theme, font, fontSize, lineSpacing, zoom,
-                                statusBar, menuVisible, toolbar, indentStyle,
-                                indentWidth, pairing, whitespace, guides,
-                                currentLine, occurrences, lineNumbers, relative,
-                                wrap, themeName, windowColour, foregroundColour,
-                                backgroundColour, selectionColour, feedback] {
+    const auto applySettings = [this, theme, font, fontSize, fontWeight, lineSpacing, zoom,
+                                statusBar, menuVisible, toolbar, toolbarCommands,
+                                indentStyle, indentWidth, pairing, pairBoxes, whitespace,
+                                guides, currentLine, occurrences, lineNumbers, relative,
+                                wrap, themeName, readColours, feedback] {
         auto value = settings_.settings();
         value.fontFamily = font->currentFont().family();
         value.fontSize = fontSize->value();
+        value.fontWeight = fontWeight->value();
         value.lineSpacing = lineSpacing->value();
         value.editorZoom = zoom->value();
         value.statusBarVisible = statusBar->isChecked();
         value.menuVisible = menuVisible->isChecked();
         value.toolbarVisible = toolbar->isChecked();
+        if (toolbarCommands->count() > 0) {
+            value.toolbarActions.clear();
+            for (int index = 0; index < toolbarCommands->count(); ++index) {
+                const auto* item = toolbarCommands->item(index);
+                if (item->checkState() == Qt::Checked)
+                    value.toolbarActions << item->data(Qt::UserRole).toString();
+            }
+        }
         value.indentationStyle = indentStyle->currentData().toString();
         value.indentationWidth = indentWidth->value();
         value.automaticPairing = pairing->isChecked();
+        for (const auto& [key, box] : pairBoxes) value.pairing[key] = box->isChecked();
         value.whitespaceVisible = whitespace->isChecked();
         value.indentationGuides = guides->isChecked();
         value.currentLineHighlight = currentLine->isChecked();
@@ -302,14 +362,7 @@ SettingsDialog::SettingsDialog(customisation::SettingsManager& settings,
         value.wordWrap = wrap->isChecked();
         auto custom = themes_.loadTheme(theme->currentText());
         custom.name = themeName->text().isEmpty() ? custom.name : themeName->text();
-        if (QColor(windowColour->text()).isValid())
-            custom.window = QColor(windowColour->text());
-        if (QColor(foregroundColour->text()).isValid())
-            custom.foreground = QColor(foregroundColour->text());
-        if (QColor(backgroundColour->text()).isValid())
-            custom.background = QColor(backgroundColour->text());
-        if (QColor(selectionColour->text()).isValid())
-            custom.selection = QColor(selectionColour->text());
+        readColours(custom);
         bool themeSaved = true;
         if (custom.name != "Dark" && custom.name != "Light") {
             themeSaved = themes_.saveTheme(custom);
