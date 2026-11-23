@@ -59,6 +59,8 @@ qt_add_executable(note
 )
 
 target_link_libraries(note PRIVATE note_app_core Qt6::Widgets)
+# A GUI-subsystem program: no console window opens beside Note on Windows.
+set_target_properties(note PROPERTIES WIN32_EXECUTABLE TRUE)
 
 include(CTest)
 if(BUILD_TESTING)
@@ -97,7 +99,12 @@ if(BUILD_TESTING)
     add_executable(note_platform_services_tests
         tests/platform/platform_services_tests.cpp)
     target_link_libraries(note_platform_services_tests PRIVATE note_app_core)
-    add_test(NAME note_platform_services_tests COMMAND note_platform_services_tests)
+    if(WIN32)
+        add_test(NAME note_platform_services_tests
+                 COMMAND note_platform_services_tests $<TARGET_FILE:note>)
+    else()
+        add_test(NAME note_platform_services_tests COMMAND note_platform_services_tests)
+    endif()
 
     add_executable(note_ui_renderer_tests
         tests/ui/editor_renderer_tests.cpp
@@ -166,6 +173,22 @@ if(BUILD_TESTING)
     add_test(NAME note_session_lifecycle_tests COMMAND note_session_lifecycle_tests)
     set_tests_properties(note_session_lifecycle_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+    add_executable(note_crash_recovery_tests
+        tests/application/crash_recovery_tests.cpp
+        src/ui/document_preview.cpp
+        src/ui/editor_renderer.cpp
+        src/ui/editor_view.cpp
+        src/ui/main_window.cpp
+        src/ui/command_palette.cpp
+        src/ui/search_panel.cpp
+        src/ui/settings_dialog.cpp
+    )
+    target_include_directories(note_crash_recovery_tests PRIVATE src)
+    target_link_libraries(note_crash_recovery_tests PRIVATE note_app_core Qt6::Widgets)
+    add_test(NAME note_crash_recovery_tests COMMAND note_crash_recovery_tests)
+    set_tests_properties(note_crash_recovery_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 300)
 
     add_executable(note_document_bench
         benchmarks/document_foundation/document_bench.cpp

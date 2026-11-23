@@ -10,6 +10,10 @@
 #include <array>
 #include <utility>
 
+#if defined(Q_OS_WIN)
+#include <windows.h>
+#endif
+
 namespace note::platform {
 namespace {
 
@@ -46,8 +50,16 @@ LaunchResult openTerminalInDirectory(const std::filesystem::path& directory) {
 #if defined(Q_OS_WIN)
     if (QProcess::startDetached(QStringLiteral("wt.exe"), {QStringLiteral("-d"), qdirectory}, qdirectory))
         return {true, {}};
-    if (QProcess::startDetached(QStringLiteral("cmd.exe"), {QStringLiteral("/K")}, qdirectory))
-        return {true, {}};
+    // From a GUI-subsystem process, plain startDetached gives cmd.exe
+    // CREATE_NO_WINDOW: it would run hidden. Ask for its own console window.
+    QProcess commandPrompt;
+    commandPrompt.setProgram(QStringLiteral("cmd.exe"));
+    commandPrompt.setArguments({QStringLiteral("/K")});
+    commandPrompt.setWorkingDirectory(qdirectory);
+    commandPrompt.setCreateProcessArgumentsModifier([](QProcess::CreateProcessArguments* arguments) {
+        arguments->flags = (arguments->flags & ~CREATE_NO_WINDOW) | CREATE_NEW_CONSOLE;
+    });
+    if (commandPrompt.startDetached()) return {true, {}};
     return {false, "Could not start Windows Terminal or Command Prompt."};
 #elif defined(Q_OS_MACOS)
     if (QProcess::startDetached(QStringLiteral("open"),

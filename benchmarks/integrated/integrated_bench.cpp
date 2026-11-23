@@ -8,11 +8,13 @@
 
 #include <QAction>
 #include <QApplication>
+#include <QCheckBox>
 #include <QDialog>
 #include <QElapsedTimer>
 #include <QEventLoop>
 #include <QFile>
 #include <QKeyEvent>
+#include <QLabel>
 #include <QLineEdit>
 #include <QScrollBar>
 #include <QStandardPaths>
@@ -103,6 +105,7 @@ int main(int argc, char* argv[]) {
             for (int i = 0; i < 1000; ++i) block += QByteArray(line).replace("%1", QByteArray::number(i));
             const qint64 target = static_cast<qint64>(mib) * 1024 * 1024;
             while (file.size() < target) file.write(block);
+            file.write("unique_tail_marker\n"); // only match, at the very end
         }
 
         note::application::DocumentWorkflow workflow;
@@ -143,13 +146,39 @@ int main(int argc, char* argv[]) {
         report("  of which edit/model/UI refresh", dispatch);
         report("  of which viewport repaint", paint);
 
-        // Typing after a search: pattern set, Find dialog closed.
+        // Find panel open: the UI-thread cost of typing into the pattern field
+        // (one search slice) and the time until the last-line match is found.
         auto* find = window.findChild<QAction*>(QStringLiteral("search_findAction"));
         require(find, "find action");
         find->trigger();
         auto* panel = window.findChild<QDialog*>(QStringLiteral("searchPanel"));
         QLineEdit* pattern = panel ? panel->findChild<QLineEdit*>() : nullptr;
         require(panel && pattern, "search panel");
+        QLabel* searchStatus = nullptr;
+        for (auto* label : panel->findChildren<QLabel*>()) searchStatus = label;
+        auto* regexBox = panel->findChildren<QCheckBox*>().value(2);
+        require(searchStatus && regexBox, "search status and regex option");
+        for (const bool regex : {false, true}) {
+            regexBox->setChecked(regex);
+            std::vector<double> typed, complete;
+            for (int i = 0; i < 5; ++i) {
+                pattern->clear();
+                timer.restart();
+                pattern->setText(regex ? QStringLiteral("unique_tail_mark(er)")
+                                       : QStringLiteral("unique_tail_marker"));
+                typed.push_back(static_cast<double>(timer.nsecsElapsed()) / 1e6);
+                require(waitFor([&] { return !searchStatus->text().startsWith("Searching"); },
+                                120000), "search completes");
+                complete.push_back(static_cast<double>(timer.nsecsElapsed()) / 1e6);
+                require(searchStatus->text() == QStringLiteral("1 match(es)"),
+                        "search finds the last-line match");
+            }
+            report(regex ? "find pattern keystroke (regex), UI-thread time"
+                         : "find pattern keystroke (plain), UI-thread time", typed);
+            report(regex ? "find to last-line match (regex)" : "find to last-line match (plain)",
+                   complete);
+        }
+        regexBox->setChecked(false);
         pattern->setText(QStringLiteral("compute"));
         panel->hide();
         view->setFocus();

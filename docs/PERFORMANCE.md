@@ -289,3 +289,49 @@ The 10 MiB series ran first, while the machine was paging; its medians are highe
 **Comparison with earlier results.** The earlier production measurements (startup median 642.7 ms, idle private 50.14 MiB with one small file, 50 MiB async open 844–857 ms in the Core-only benchmark) came from a Ryzen 7 7435HS / 24 GB host with Qt 6.9.1. The figures above come from a slower, memory-constrained machine with Qt 6.12. They measure the full GUI path, not the Core benchmark, so they are not directly comparable and are not evidence of a regression or improvement.
 
 **Status against the provisional targets on this host.** Startup under 300 ms: **Fail** (1,060.6 ms median, warm cache; cold start not measured). Idle memory under 50 MB: **Not comparable** (44.57 MiB private bytes with *no* document; the one-small-file condition could not be reproduced). Typing under 16 ms: **Fail** for CPU-side edit+repaint (25.5 ms median at 50 MiB); input-to-photon **Not measured**. Scrolling without dropped frames at 50 MiB: **Not measured** (11.2 ms CPU per page repaint; no frame-pacing data). Theme/settings changes without buffer recreation: settings toggles applied in 27–53 ms without recreating buffers, and no visible-stall criterion is defined. Theme switching was not timed separately. Long-line, multi-tab stress, cold start, Linux/macOS and reference-device measurements remain outstanding.
+
+## Stabilisation measurements (2026-11-23)
+
+**Host and build.** Same 4 GB Intel Core i5-10310U laptop and toolchain as the integrated V1 pass above (MSYS2 UCRT64 GCC 16.2.0, Qt 6.12.0, Release, `-j 2`), at commit `9f6db17` plus the benchmark changes in the same commit as this section. Free physical memory was 335–448 MB at the start of each series, so paging noise is present. This is not an owner-approved reference device.
+
+**Search engine** (`SearchEngine::find`, Release, a probe linking `note_app_core`; fixture of repeated 62-byte lines with one match on the last line, warm memory, three runs each).
+
+| Case | Before (`3a12915`) | After |
+|---|---|---|
+| 10 MiB plain / regex, one call | aborted at 103–108 ms, **0 matches** | complete, 1 match: 47–50 ms / 65–69 ms |
+| 50 MiB plain / regex, one call | aborted at 114–121 ms, **0 matches** | complete, 1 match: 133–279 ms / 226–294 ms |
+| 50 MiB in 10 ms slices (Find panel) | n/a | 14–29 slices; longest slice 10.2–10.9 ms |
+| `(a+)+[bc]` on 1 KiB–1 MiB of `a` | 36–126 ms, reported **complete, 0 matches** | stopped and reported in 36–69 ms |
+
+The before cost was quadratic: each 64 KiB window copied the rest of the document. One PCRE2 call is bounded only by PCRE2's default match limit, measured at up to ~70 ms on this host.
+
+**Integrated GUI** (`note_integrated_bench`, same method as the integrated V1 pass; five runs at 10 MiB, three at 50 MiB; median of per-run medians, median run p95 in parentheses).
+
+| Scenario | 10 MiB | 50 MiB |
+|---|---:|---:|
+| Open to first painted editor | 456.7 ms | 2,366.5 ms |
+| Keystroke: edit + synchronous repaint | 22.2 ms (34.2) | 22.2 ms (28.6) |
+| — of which viewport repaint | 21.3 ms | 21.2 ms |
+| Find field keystroke, UI-thread time (plain / regex) | 10.5 / 10.7 ms | 10.4 / 10.5 ms |
+| Find field keystroke to last-line match found (plain / regex) | 42.5 / 104.0 ms | 164.5 / 487.4 ms (regex p95 730.6) |
+| Keystroke edit/UI refresh with a closed Find pattern | 2.0 ms | 2.6 ms |
+| Page scroll + repaint | 13.4 ms (19.1) | 13.1 ms (19.0) |
+| Line-number toggle + repaint | 25.3 ms | 25.6 ms |
+| Enable word wrap + repaint | 29.8 ms | 35.4 ms |
+| Save (atomic) | 300.9 ms | 1,556.9 ms |
+| Private bytes: window only / after open / after edit+save | 46.3 / 61.1 / 64–66 MiB | 46.3 / 108 / 121–123 MiB |
+
+The Find rows are new. Before this change, the same keystroke ran the whole search on the UI thread and, at 10 and 50 MiB, gave up at the 100 ms budget without reaching the match. One 10 MiB run (run 2) was slowed throughout by paging. Other rows are within run-to-run noise of the integrated V1 pass; no renderer change was made.
+
+**Startup and idle** (`note.exe` Release, now built as a GUI-subsystem program; same PowerShell method as before: `Start-Process` until a non-zero `MainWindowHandle`, graceful close, warm cache; no document open).
+
+| Measurement | Result |
+|---|---|
+| Launch to first visible main window, 20 runs (ms) | 766.0, 133.8, 109.8, 110.5, 128.8, 150.3, 126.8, 140.2, 157.4, 138.9, 126.7, 113.3, 140.6, 126.8, 111.5, 125.3, 125.6, 120.6, 109.5, 124.1 |
+| Median / p95 (nearest-rank) | **126.8 ms / 157.4 ms** (previous pass: 1,060.6 / 1,986.2 ms) |
+| Idle after 60 s: working set / private bytes (10 samples) | 33.65–33.98 MiB / 44.46 MiB |
+| Idle CPU time over the following 60 s | 0.031 s |
+
+The startup drop coincides with the switch from the console to the GUI subsystem; nothing else on the startup path changed. The likely cause is that a console program also started a console host (Windows Terminal is the default on this host) for each launch, but that was not measured separately. The first run (766 ms) followed the Release rebuild.
+
+**Status against the provisional targets on this host.** Startup under 300 ms: **met on this host for warm-cache launch to first visible window** (126.8 ms median, 157.4 ms p95). Cold start and time to a typeable editor were not measured, and this is not the reference device, so the target is not accepted. Idle memory under 50 MB with one small file: **not comparable** (44.46 MiB private bytes with no document; `note.exe` still takes no file argument). Typing under 16 ms: **fail** for CPU-side edit + repaint (22.2 ms median at 50 MiB, dominated by repaint); input-to-photon **not measured**. Scrolling without dropped frames at 50 MiB: **not measured** (13.1 ms CPU per page repaint; no frame-pacing data). Opening 50 MB with a responsive window and progressively usable content: **fail** (2.4 s to first painted editor; content is published only when fully loaded). None of these targets is owner-approved.

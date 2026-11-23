@@ -203,6 +203,13 @@ bool EditorView::handleKeyPress(QKeyEvent* event) {
     }
 
     const auto modifiers = event->modifiers();
+    if (modifiers.testFlag(Qt::ControlModifier) &&
+        !modifiers.testFlag(Qt::AltModifier) && !modifiers.testFlag(Qt::MetaModifier) &&
+        (event->key() == Qt::Key_Home || event->key() == Qt::Key_End)) {
+        moveCursor(event->key() == Qt::Key_Home ? documentStartKey : documentEndKey,
+                   modifiers.testFlag(Qt::ShiftModifier));
+        return true;
+    }
     if (modifiers.testFlag(Qt::ControlModifier) ||
         modifiers.testFlag(Qt::AltModifier) ||
         modifiers.testFlag(Qt::MetaModifier))
@@ -216,6 +223,8 @@ bool EditorView::handleKeyPress(QKeyEvent* event) {
     case Qt::Key_Down:
     case Qt::Key_Home:
     case Qt::Key_End:
+    case Qt::Key_PageUp:
+    case Qt::Key_PageDown:
         moveCursor(event->key(), shift);
         return true;
     case Qt::Key_Backspace:
@@ -245,6 +254,10 @@ bool EditorView::handleKeyPress(QKeyEvent* event) {
     const auto text = event->text();
     if (!text.isEmpty() && text.at(0).isPrint()) {
         const auto utf8 = text.toUtf8();
+        if (utf8 == "}" && dedentClosingBrace()) {
+            afterEdit();
+            return true;
+        }
         if (utf8.size() == 1 && handleTextCharacter(utf8.at(0))) {
             afterEdit();
             return true;
@@ -273,6 +286,19 @@ void EditorView::moveCursor(int key, bool extendSelection) {
     case Qt::Key_Right: cursors_.moveRight(); break;
     case Qt::Key_Up: cursors_.moveUp(); break;
     case Qt::Key_Down: cursors_.moveDown(); break;
+    case Qt::Key_PageUp:
+    case Qt::Key_PageDown: {
+        const auto rows = std::max(1, renderer_->viewport()->height() /
+                                          std::max(1, renderer_->configuration().lineHeight) - 1);
+        for (int row = 0; row < rows; ++row)
+            key == Qt::Key_PageUp ? cursors_.moveUp() : cursors_.moveDown();
+        break;
+    }
+    case documentStartKey:
+    case documentEndKey:
+        for (std::size_t index = 0; index < cursors_.cursorCount(); ++index)
+            setCursorOffset(index, key == documentStartKey ? 0 : buffer_.sizeBytes());
+        break;
     case Qt::Key_Home:
     case Qt::Key_End:
         for (std::size_t index = 0; index < cursors_.cursorCount(); ++index) {
@@ -568,6 +594,31 @@ void EditorView::backspaceWithPairHandling() {
     history_.endTransaction();
 }
 
+bool EditorView::dedentClosingBrace() {
+    if (cursors_.cursorCount() != 1 || hasAnySelection()) return false;
+    const auto cursor = cursors_.primaryOffset();
+    // An existing } after the cursor is skipped by pairing instead.
+    if (cursor < buffer_.sizeBytes() && buffer_.byteAt(cursor) == '}') return false;
+    const auto line = buffer_.lineRange(cursors_.primaryLocation().line);
+    if (cursor == line.begin) return false;
+    for (auto at = line.begin; at < cursor; ++at) {
+        const auto byte = buffer_.byteAt(at);
+        if (byte != ' ' && byte != '\t') return false;
+    }
+    auto cut = cursor;
+    if (buffer_.byteAt(cut - 1) == '\t') {
+        --cut;
+    } else {
+        for (std::size_t removed = 0; removed < indentationWidth_ && cut > line.begin &&
+                                      buffer_.byteAt(cut - 1) == ' '; ++removed)
+            --cut;
+    }
+    (void)history_.replaceRange(cut, cursor - cut, "}", preferredLineEnding_);
+    setCursorOffset(0, cut + 1);
+    collapseSelectionsAtCursors();
+    return true;
+}
+
 void EditorView::insertNewlineWithIndent() {
     const auto cursor = cursors_.primaryOffset();
     const auto location = cursors_.primaryLocation();
@@ -583,9 +634,12 @@ void EditorView::insertNewlineWithIndent() {
         indentation.append(indentationUsesTabs_ ? "\t"
             : std::string(indentationWidth_, ' '));
     const auto indent = indentation.size();
+    const auto inner = indentation;
     const auto afterCursor = cursor < buffer_.sizeBytes()
                                  ? buffer_.byteAt(cursor)
                                  : static_cast<unsigned char>(0);
+    const bool betweenBraces = afterCursor == '}' && cursor > lineRange.begin &&
+                               buffer_.byteAt(cursor - 1) == '{';
     if (afterCursor == '}' && indent != 0) {
         if (indentationUsesTabs_ && indentation.back() == '\t') {
             indentation.pop_back();
@@ -600,6 +654,13 @@ void EditorView::insertNewlineWithIndent() {
                 indentation.back() == '\t')
                 indentation.pop_back();
         }
+    }
+    if (betweenBraces && cursors_.cursorCount() == 1 && !hasAnySelection()) {
+        // {|} opens into a body line one level in, with } at the outer indent.
+        (void)history_.insertText("\n" + inner + "\n" + indentation, preferredLineEnding_);
+        setCursorOffset(0, cursor + 1 + inner.size());
+        collapseSelectionsAtCursors();
+        return;
     }
     std::string insertion{"\n"};
     insertion.append(indentation);

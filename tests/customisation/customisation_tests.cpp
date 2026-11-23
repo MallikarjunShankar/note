@@ -48,6 +48,39 @@ int main(int argc, char* argv[]) {
     QString importedName;
     require(themes.importTheme(exportPath, &importedName) &&
             importedName == custom.name, "theme import returns its saved name");
+    {
+        // Regression: export wrote only 6 of the colours, so a round trip lost
+        // the rest. Every editable colour must survive export and import.
+        note::customisation::ThemeManager other(temporary.filePath("other-themes"));
+        auto every = dark;
+        every.name = "Every Colour";
+        int shade = 1;
+        for (const auto& field : note::customisation::themeColourFields())
+            every.*(field.member) = QColor(shade, shade * 2, shade * 3), ++shade;
+        const auto everyPath = temporary.filePath("every.json");
+        require(themes.exportTheme(every, everyPath) && other.importTheme(everyPath),
+                "full theme exports and imports");
+        const auto restored = other.loadTheme("Every Colour");
+        for (const auto& field : note::customisation::themeColourFields())
+            require(restored.*(field.member) == every.*(field.member),
+                    "every theme colour survives export and import");
+    }
+    {
+        // Theme files from before tabBar/border/interfaceText derive them from
+        // their own colours instead of the dark fallback.
+        const auto legacyPath = temporary.filePath("legacy.json");
+        QFile legacy(legacyPath);
+        require(legacy.open(QIODevice::WriteOnly), "legacy theme fixture opens");
+        legacy.write(R"({"name":"Legacy","window":"#eeeeee","foreground":"#111111",)"
+                     R"("background":"#ffffff","indentationGuide":"#cccccc"})");
+        legacy.close();
+        require(themes.importTheme(legacyPath), "legacy theme imports");
+        const auto loadedLegacy = themes.loadTheme("Legacy");
+        require(loadedLegacy.tabBar == QColor("#eeeeee") &&
+                    loadedLegacy.border == QColor("#cccccc") &&
+                    loadedLegacy.interfaceText == QColor("#111111"),
+                "missing new theme fields fall back to the theme's own colours");
+    }
 
     auto preview = dark;
     preview.name = "Preview Only";

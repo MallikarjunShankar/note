@@ -7,10 +7,12 @@
 #include <QAction>
 #include <QAbstractButton>
 #include <QApplication>
+#include <QCheckBox>
 #include <QClipboard>
 #include <QContextMenuEvent>
 #include <QDialog>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QEventLoop>
 #include <QFile>
 #include <QFontMetricsF>
@@ -27,6 +29,7 @@
 #include <QPushButton>
 #include <QTemporaryDir>
 #include <QTabBar>
+#include <QSpinBox>
 #include <QStackedWidget>
 #include <QTimer>
 
@@ -116,6 +119,134 @@ int main(int argc, char* argv[]) {
                     "conflicting shortcut is rejected and names the other command");
         }
         {
+            // Customisation controls the model supported but Settings did not expose.
+            QTemporaryDir storage;
+            require(storage.isValid(), "customisation fixture directory");
+            note::customisation::SettingsManager settings(storage.filePath(QStringLiteral("s.ini")));
+            note::customisation::ThemeManager themes(storage.filePath(QStringLiteral("themes")));
+            note::commands::KeybindingManager keys(storage.filePath(QStringLiteral("k.ini")));
+            note::commands::CommandRegistry registry;
+            registry.registerCommand({"file.new", "New", "File", "New"}, [] {});
+            registry.registerCommand({"file.save", "Save", "File", "Save"}, [] {});
+            registry.registerCommand({"search.find", "Find", "Search", "Find"}, [] {});
+            note::ui::SettingsDialog dialog(settings, themes, keys, {}, nullptr, &registry);
+            auto* round = dialog.findChild<QCheckBox*>(QStringLiteral("pair_round"));
+            auto* single = dialog.findChild<QCheckBox*>(QStringLiteral("pair_singleQuote"));
+            auto* weight = dialog.findChild<QSpinBox*>(QStringLiteral("fontWeight"));
+            auto* toolbarList = dialog.findChild<QListWidget*>(QStringLiteral("toolbarCommands"));
+            auto* cursor = dialog.findChild<QLineEdit*>(QStringLiteral("themeColour_cursor"));
+            auto* border = dialog.findChild<QLineEdit*>(QStringLiteral("themeColour_border"));
+            auto* name = dialog.findChild<QLineEdit*>();
+            QLineEdit* themeName = nullptr;
+            for (auto* line : dialog.findChildren<QLineEdit*>())
+                if (line->text() == settings.settings().themeName && !line->objectName().startsWith("theme"))
+                    themeName = line;
+            auto* reset = dialog.findChild<QPushButton*>(QStringLiteral("resetThemeValues"));
+            int colourRows = 0;
+            for (auto* line : dialog.findChildren<QLineEdit*>())
+                colourRows += line->objectName().startsWith(QStringLiteral("themeColour_"));
+            require(round && single && weight && toolbarList && toolbarList->count() == 3 &&
+                        cursor && border && name && themeName && reset &&
+                        colourRows == static_cast<int>(note::customisation::themeColourFields().size()),
+                    "settings expose pairing, weight, toolbar, every theme colour and reset");
+            const auto savedCursor = cursor->text();
+            cursor->setText(QStringLiteral("#abcdef"));
+            reset->click();
+            require(cursor->text() == savedCursor, "Reset Theme Values discards unsaved colour edits");
+
+            round->setChecked(false);
+            weight->setValue(700);
+            for (int index = 0; index < toolbarList->count(); ++index)
+                toolbarList->item(index)->setCheckState(
+                    index == 1 ? Qt::Checked : Qt::Unchecked);
+            themeName->setText(QStringLiteral("Mine"));
+            border->setText(QStringLiteral("#123456"));
+            for (auto* button : dialog.findChildren<QAbstractButton*>())
+                if (button->text() == QStringLiteral("&Apply") || button->text() == QStringLiteral("Apply"))
+                    button->click();
+            const auto& applied = settings.settings();
+            require(!applied.pairing.at("round") && applied.pairing.at("singleQuote") &&
+                        applied.fontWeight == 700 &&
+                        applied.toolbarActions == QStringList{QStringLiteral("file.save")},
+                    "pairing, font weight and toolbar contents apply from Settings");
+            require(applied.themeName == QStringLiteral("Mine") &&
+                        themes.loadTheme(QStringLiteral("Mine")).border == QColor("#123456"),
+                    "a newly editable theme colour is saved with the custom theme");
+        }
+        {
+            // Regression: PageUp/PageDown and Ctrl+Home/Ctrl+End did nothing, so a
+            // long document could only be traversed line by line from the keyboard.
+            note::application::DocumentWorkflow navWorkflow;
+            note::ui::MainWindow navWindow(navWorkflow);
+            navWindow.resize(800, 600);
+            navWindow.show();
+            navWindow.activateWindow();
+            QApplication::processEvents();
+            navWindow.findChild<QAction*>(QStringLiteral("newDocumentAction"))->trigger();
+            auto* view = activeEditorView(navWindow);
+            require(view, "navigation fixture editor");
+            require(view->renderer()->hasFocus(),
+                    "a new document takes keyboard focus so typing works without a click");
+            std::string text;
+            for (int line = 0; line < 300; ++line) text += "line\n";
+            view->replaceRange(0, 0, text);
+            const auto size = navWorkflow.activeDocument()->buffer().sizeBytes();
+            sendKey(*view, Qt::Key_End, Qt::ControlModifier);
+            require(view->cursors().primaryOffset() == size, "Ctrl+End moves to the document end");
+            sendKey(*view, Qt::Key_Home, Qt::ControlModifier);
+            require(view->cursors().primaryOffset() == 0, "Ctrl+Home moves to the document start");
+            sendKey(*view, Qt::Key_PageDown);
+            const auto paged = view->cursors().primaryLocation().line;
+            require(paged > 1 && paged < 300, "PageDown moves by about one viewport");
+            sendKey(*view, Qt::Key_PageUp);
+            require(view->cursors().primaryLocation().line == 0, "PageUp moves back");
+            sendKey(*view, Qt::Key_PageDown, Qt::ShiftModifier);
+            auto selection = view->selections().selection(0);
+            require(selection.anchor == 0 && selection.active == view->cursors().primaryOffset() &&
+                        selection.active > 0,
+                    "Shift+PageDown extends the selection");
+            sendKey(*view, Qt::Key_End, Qt::ControlModifier | Qt::ShiftModifier);
+            selection = view->selections().selection(0);
+            require(selection.anchor == 0 && selection.active == size,
+                    "Ctrl+Shift+End selects to the document end");
+
+            // Smart indentation through real key events, with pairing on and off.
+            for (const bool pairing : {true, false}) {
+                navWindow.findChild<QAction*>(QStringLiteral("newDocumentAction"))->trigger();
+                auto* indentView = activeEditorView(navWindow);
+                note::editor::BracketConfiguration brackets;
+                if (!pairing)
+                    brackets.parentheses = brackets.squareBrackets = brackets.curlyBraces =
+                        brackets.doubleQuotes = brackets.singleQuotes = false;
+                indentView->setBracketConfiguration(brackets);
+                for (const char* chunk : {" ", " ", "i", "f", " ", "{"})
+                    sendKey(*indentView, Qt::Key_unknown, Qt::NoModifier, QString::fromLatin1(chunk));
+                sendKey(*indentView, Qt::Key_Return);
+                const auto& indented = navWorkflow.activeDocument()->buffer();
+                require(indented.text().rfind("  if {\n      ", 0) == 0,
+                        "Enter after { keeps the line indent and adds one level");
+                if (!pairing) {
+                    sendKey(*indentView, Qt::Key_unknown, Qt::NoModifier, QStringLiteral("}"));
+                    require(indented.text() == "  if {\n  }",
+                            "typing } on a blank indented line removes one level");
+                    sendKey(*indentView, Qt::Key_Z, Qt::ControlModifier);
+                    require(indented.text() == "  if {\n      ", "the } outdent is one undo step");
+                } else {
+                    // Regression: Enter between paired braces left the body at the
+                    // outer indent ("{\n|}").
+                    require(indented.text() == "  if {\n      \n  }" &&
+                                indentView->cursors().primaryOffset() == 13,
+                            "Enter between paired braces opens an indented body line");
+                    sendKey(*indentView, Qt::Key_unknown, Qt::NoModifier, QStringLiteral("x"));
+                    require(indented.text() == "  if {\n      x\n  }", "typing lands in the body");
+                    sendKey(*indentView, Qt::Key_Z, Qt::ControlModifier);
+                    sendKey(*indentView, Qt::Key_Z, Qt::ControlModifier);
+                    require(indented.text() == "  if {}", "opening the pair is one undo step");
+                }
+            }
+            navWorkflow.shutdown();
+        }
+        {
             // Find Next after editing with the Find dialog closed must use fresh offsets.
             note::application::DocumentWorkflow searchWorkflow;
             note::ui::MainWindow searchWindow(searchWorkflow);
@@ -139,6 +270,57 @@ int main(int argc, char* argv[]) {
             require(searchWorkflow.activeDocument()->buffer().textRange(begin, 2) == "ab" &&
                         std::max(selection.anchor, selection.active) - begin == 2,
                     "Find Next re-runs a stale search after edits with the panel closed");
+            searchWorkflow.shutdown();
+        }
+        {
+            // Large documents are searched in slices: typing a pattern returns
+            // quickly, and Find Next waits for a match beyond the first slice.
+            note::application::DocumentWorkflow searchWorkflow;
+            note::ui::MainWindow searchWindow(searchWorkflow);
+            searchWindow.show();
+            searchWindow.findChild<QAction*>(QStringLiteral("newDocumentAction"))->trigger();
+            auto* view = activeEditorView(searchWindow);
+            require(view, "large search fixture editor");
+            std::string text;
+            while (text.size() < 12u * 1024 * 1024)
+                text += "    const auto value = compute(index, buffer.size());\n";
+            const auto expected = text.size();
+            text += "needle";
+            view->replaceRange(0, 0, text);
+            searchWindow.findChild<QAction*>(QStringLiteral("search_findAction"))->trigger();
+            auto* panel = searchWindow.findChild<QDialog*>(QStringLiteral("searchPanel"));
+            auto* pattern = panel ? panel->findChild<QLineEdit*>() : nullptr;
+            require(panel && pattern, "large search panel");
+            pattern->setText(QStringLiteral("needle"));
+            searchWindow.findChild<QAction*>(QStringLiteral("search_nextAction"))->trigger();
+            QLabel* status = nullptr;
+            for (auto* label : panel->findChildren<QLabel*>()) status = label;
+            QElapsedTimer waited;
+            waited.start();
+            while (status->text().startsWith(QStringLiteral("Searching")) && waited.elapsed() < 60000)
+                QApplication::processEvents();
+            const auto selection = view->selections().selection(0);
+            require(status->text() == QStringLiteral("1 match(es)") &&
+                        std::min(selection.anchor, selection.active) == expected &&
+                        std::max(selection.anchor, selection.active) == expected + 6,
+                    "sliced search finds and selects a match at the end of 12 MiB");
+            // Replace All right after typing must also replace matches the
+            // background slices have not reached yet.
+            view->replaceRange(0, 0, "needle ");
+            searchWindow.findChild<QAction*>(QStringLiteral("search_replaceAction"))->trigger();
+            const auto edits = panel->findChildren<QLineEdit*>();
+            require(edits.size() >= 2, "replace field exists");
+            edits[1]->setText(QStringLiteral("pin"));
+            pattern->setText(QStringLiteral("needle"));
+            QAbstractButton* replaceAll = nullptr;
+            for (auto* button : panel->findChildren<QAbstractButton*>())
+                if (button->text() == QStringLiteral("Replace All")) replaceAll = button;
+            require(replaceAll, "Replace All button");
+            replaceAll->click();
+            const auto& replaced = searchWorkflow.activeDocument()->buffer();
+            require(replaced.textRange(0, 4) == "pin " &&
+                        replaced.textRange(replaced.sizeBytes() - 3, 3) == "pin",
+                    "Replace All replaces matches beyond the first search slice");
             searchWorkflow.shutdown();
         }
         note::application::DocumentWorkflow workflow;
@@ -681,7 +863,7 @@ int main(int argc, char* argv[]) {
                 QApplication::activeModalWidget());
             auto* background = dialog
                 ? dialog->findChild<QLineEdit*>(
-                      QStringLiteral("themeBackgroundColour"))
+                      QStringLiteral("themeColour_background"))
                 : nullptr;
             if (background) {
                 background->setText(QStringLiteral("#010203"));

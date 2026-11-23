@@ -29,28 +29,14 @@ bool readTheme(const QJsonObject& object, const NoteTheme& fallback, NoteTheme& 
     if (name.isEmpty()) return false;
     theme = fallback;
     theme.name = name;
-    auto readColour = [&](const char* key, QColor& target) {
-        const auto text = object.value(key).toString();
-        QColor candidate(text);
-        if (candidate.isValid()) target = candidate;
-    };
-    readColour("window", theme.window);
-    readColour("menu", theme.menu);
-    readColour("tab", theme.tab);
-    readColour("activeTab", theme.activeTab);
-    readColour("status", theme.status);
-    readColour("foreground", theme.foreground);
-    readColour("background", theme.background);
-    readColour("cursor", theme.cursor);
-    readColour("selection", theme.selection);
-    readColour("currentLine", theme.currentLine);
-    readColour("lineNumber", theme.lineNumber);
-    readColour("activeLineNumber", theme.activeLineNumber);
-    readColour("indentationGuide", theme.indentationGuide);
-    readColour("whitespace", theme.whitespace);
-    readColour("matchingOccurrence", theme.matchingOccurrence);
-    readColour("matchingBracket", theme.matchingBracket);
-    readColour("searchMatch", theme.searchMatch);
+    for (const auto& field : themeColourFields()) {
+        const QColor candidate(object.value(field.key).toString());
+        if (candidate.isValid()) theme.*field.member = candidate;
+    }
+    // Themes saved before these fields existed take them from their own colours.
+    if (!object.contains("tabBar")) theme.tabBar = theme.window;
+    if (!object.contains("border")) theme.border = theme.indentationGuide;
+    if (!object.contains("interfaceText")) theme.interfaceText = theme.foreground;
     const auto syntax = object.value("syntax").toObject();
     for (auto it = syntax.begin(); it != syntax.end(); ++it) {
         QColor candidate(it.value().toString());
@@ -58,6 +44,44 @@ bool readTheme(const QJsonObject& object, const NoteTheme& fallback, NoteTheme& 
     }
     return true;
 }
+
+QByteArray themeJson(const NoteTheme& theme) {
+    QJsonObject object;
+    object["name"] = theme.name;
+    for (const auto& field : themeColourFields())
+        object[field.key] = colourName(theme.*field.member);
+    QJsonObject syntax;
+    for (const auto& [category, colour] : theme.syntaxColours)
+        syntax[QString::fromStdString(category)] = colourName(colour);
+    object["syntax"] = syntax;
+    return QJsonDocument(object).toJson(QJsonDocument::Indented);
+}
+} // namespace
+
+std::span<const ThemeColourField> themeColourFields() {
+    static constexpr ThemeColourField fields[] = {
+        {"background", "Editor background", &NoteTheme::background},
+        {"foreground", "Default text", &NoteTheme::foreground},
+        {"cursor", "Cursor", &NoteTheme::cursor},
+        {"selection", "Selection", &NoteTheme::selection},
+        {"currentLine", "Current-line highlight", &NoteTheme::currentLine},
+        {"lineNumber", "Line numbers", &NoteTheme::lineNumber},
+        {"activeLineNumber", "Current line number", &NoteTheme::activeLineNumber},
+        {"indentationGuide", "Indentation guides", &NoteTheme::indentationGuide},
+        {"whitespace", "Whitespace indicators", &NoteTheme::whitespace},
+        {"matchingOccurrence", "Matching occurrences", &NoteTheme::matchingOccurrence},
+        {"matchingBracket", "Matching brackets", &NoteTheme::matchingBracket},
+        {"searchMatch", "Search matches", &NoteTheme::searchMatch},
+        {"window", "Window background", &NoteTheme::window},
+        {"menu", "Menu background", &NoteTheme::menu},
+        {"tabBar", "Tab bar background", &NoteTheme::tabBar},
+        {"tab", "Inactive tab", &NoteTheme::tab},
+        {"activeTab", "Active tab", &NoteTheme::activeTab},
+        {"status", "Status bar", &NoteTheme::status},
+        {"border", "Borders and separators", &NoteTheme::border},
+        {"interfaceText", "Interface text and icons", &NoteTheme::interfaceText},
+    };
+    return fields;
 }
 
 ThemeManager::ThemeManager(QString themeDirectory, QObject* parent)
@@ -72,6 +96,9 @@ void ThemeManager::initialiseThemes() {
     darkTheme_.tab = QColor("#20242b");
     darkTheme_.activeTab = QColor("#303746");
     darkTheme_.status = QColor("#20242b");
+    darkTheme_.tabBar = QColor("#181b20");
+    darkTheme_.border = QColor("#323843");
+    darkTheme_.interfaceText = QColor("#d7dee9");
     darkTheme_.foreground = QColor("#d7dee9");
     darkTheme_.background = QColor("#1e222a");
     darkTheme_.cursor = QColor("#f2f5f8");
@@ -94,6 +121,9 @@ std::vector<NoteTheme> ThemeManager::builtInThemes() const {
     light.tab = QColor("#e1e3e7");
     light.activeTab = QColor("#ffffff");
     light.status = QColor("#f4f5f7");
+    light.tabBar = QColor("#e7e9ed");
+    light.border = QColor("#c9cdd3");
+    light.interfaceText = QColor("#20242b");
     light.foreground = QColor("#20242b");
     light.background = QColor("#ffffff");
     light.cursor = QColor("#20242b");
@@ -158,32 +188,9 @@ void ThemeManager::clearPreviewTheme() noexcept {
 bool ThemeManager::saveTheme(const NoteTheme& theme) {
     if (!validateTheme(theme)) return false;
     QDir().mkpath(themeDirectory_);
-    QJsonObject object;
-    object["name"] = theme.name;
-    object["window"] = colourName(theme.window);
-    object["menu"] = theme.menu.name(QColor::HexRgb);
-    object["tab"] = theme.tab.name(QColor::HexRgb);
-    object["activeTab"] = theme.activeTab.name(QColor::HexRgb);
-    object["status"] = theme.status.name(QColor::HexRgb);
-    object["foreground"] = theme.foreground.name(QColor::HexRgb);
-    object["background"] = theme.background.name(QColor::HexRgb);
-    object["cursor"] = theme.cursor.name(QColor::HexRgb);
-    object["selection"] = theme.selection.name(QColor::HexRgb);
-    object["currentLine"] = theme.currentLine.name(QColor::HexRgb);
-    object["lineNumber"] = theme.lineNumber.name(QColor::HexRgb);
-    object["activeLineNumber"] = theme.activeLineNumber.name(QColor::HexRgb);
-    object["indentationGuide"] = theme.indentationGuide.name(QColor::HexRgb);
-    object["whitespace"] = theme.whitespace.name(QColor::HexRgb);
-    object["matchingOccurrence"] = theme.matchingOccurrence.name(QColor::HexRgb);
-    object["matchingBracket"] = theme.matchingBracket.name(QColor::HexRgb);
-    object["searchMatch"] = theme.searchMatch.name(QColor::HexRgb);
-    QJsonObject syntax;
-    for (const auto& [category, colour] : theme.syntaxColours)
-        syntax[QString::fromStdString(category)] = colour.name(QColor::HexRgb);
-    object["syntax"] = syntax;
     QSaveFile file(QDir(themeDirectory_).filePath(theme.name + ".json"));
     if (!file.open(QIODevice::WriteOnly)) return false;
-    const auto payload = QJsonDocument(object).toJson(QJsonDocument::Indented);
+    const auto payload = themeJson(theme);
     if (file.write(payload) != payload.size() || !file.commit()) {
         file.cancelWriting();
         return false;
@@ -213,19 +220,7 @@ bool ThemeManager::exportTheme(const NoteTheme& theme, const QString& destinatio
     QSaveFile file(destinationPath);
     file.setDirectWriteFallback(false);
     if (!file.open(QIODevice::WriteOnly)) return false;
-    QJsonObject object;
-    object["name"] = theme.name;
-    object["foreground"] = theme.foreground.name(QColor::HexRgb);
-    object["background"] = theme.background.name(QColor::HexRgb);
-    object["window"] = theme.window.name(QColor::HexRgb);
-    object["selection"] = theme.selection.name(QColor::HexRgb);
-    object["cursor"] = theme.cursor.name(QColor::HexRgb);
-    object["searchMatch"] = theme.searchMatch.name(QColor::HexRgb);
-    QJsonObject syntax;
-    for (const auto& [category, colour] : theme.syntaxColours)
-        syntax[QString::fromStdString(category)] = colour.name(QColor::HexRgb);
-    object["syntax"] = syntax;
-    const auto payload = QJsonDocument(object).toJson(QJsonDocument::Indented);
+    const auto payload = themeJson(theme);
     return file.write(payload) == payload.size() && file.commit();
 }
 
