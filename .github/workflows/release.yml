@@ -1,0 +1,44 @@
+name: Release package
+
+# Manual only. Builds the package with scripts/release.ps1 and keeps it as a
+# workflow artifact. It does not publish a release, create a tag or push.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Windows x64 package
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: msys2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-qt6-base
+
+      - name: Build, test and package
+        shell: powershell
+        run: >-
+          .\scripts\release.ps1
+          -Msys2Root "${{ steps.msys2.outputs.msys2-location }}"
+          -OutputRoot "${{ runner.temp }}\note-release"
+          -Jobs 4
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: note-windows-x64
+          path: |
+            ${{ runner.temp }}/note-release/Note-*.zip
+            ${{ runner.temp }}/note-release/Note-*.zip.sha256
+            ${{ runner.temp }}/note-release/Note-*-RELEASE_NOTES.md
+          if-no-files-found: error
