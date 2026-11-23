@@ -91,7 +91,7 @@ Measurements below were made on the development host described above, not on a r
 | Keystroke-to-screen | Under 16 ms | No real-widget key-to-paint or physical input-to-photon latency measurement was made. | **Not measured** |
 | Scrolling | No dropped frames in a 50 MB file | No real-display scroll trace or frame-pacing measurement was made. Existing offscreen renderer tests/benchmarks do not establish this target. | **Not validated on reference hardware** |
 | Opening a 50 MB file | Window responsive; content usable progressively | The `DocumentWorkflow::openAsync` Core benchmark completes in 844–857 ms with first read progress at 11–14 ms, but publishes only a complete buffer; it does not measure visible GUI responsiveness or progressively usable text. | **Fail** |
-| Theme/settings changes | No buffer recreation or visible stall | Settings/theme application is not implemented, so this behavior was not measured. | **Not measured** |
+| Theme/settings changes | No buffer recreation or visible stall | Not measured at the time of this table (settings/theme application was not yet implemented). See *Integrated V1 verification measurements* below for later settings-toggle timings. | **Not measured** |
 
 Startup samples below are milliseconds from process launch; the editor-ready proxy is the elapsed time until Ctrl+N changed the window title. The reported p95 uses linear interpolation between ordered samples.
 
@@ -251,3 +251,41 @@ The `TextBuffer` constructors now adopt the already-owned normalized/snapshot st
 Five runs do not support a reliable p95; raw samples, ranges, and medians are shown instead. The async-open sampled peaks are descriptive and may miss transient maxima. The substantial measured gain is lower transient memory during opening; the steady private-bytes median decreased from 93.82 MiB to 91.37 MiB. Save-time peak memory was not independently sampled, so only removal of the full snapshot allocation is established there. The small end-to-end timing changes are within run variability and are not claimed as product-level speed improvements.
 
 The async benchmark's Qt Core heartbeat remains at a 2–3 ms maximum gap; it does not measure QWidget responsiveness or physical display response. Opening still publishes only after full read, validation, indexing, and final fingerprint verification; progressive content availability is not implemented. Startup, idle memory, keystroke-to-screen latency, real-display scrolling, long-line behavior, and reference-device performance were not remeasured by this change. Existing provisional target statuses and the Phase 02 Partial status are unchanged.
+
+## Integrated V1 verification measurements (2026-11-23)
+
+**Host and build.** These runs used a different machine from the development host above: Intel Core i5-10310U (4 cores/8 threads, 1.70 GHz base), 3.78 GB visible physical memory (4 GB laptop) with roughly 360 MB free when the series started (Memory Compression was active, so paging noise is present), Windows 11 Pro build 26300. GPU, display resolution/refresh rate and power mode were not recorded. Toolchain: MSYS2 UCRT64 GCC 16.2.0, Qt 6.12.0 (`mingw-w64-ucrt-x86_64-qt6-base 6.12.0-2`), CMake 4.5.1, Ninja 1.13.2, Release configuration, `-j 2`. Code: commit `3a12915` plus the benchmark source at that commit. This is not an owner-approved reference device; nothing below establishes the provisional §7.0 budgets.
+
+**Method.** `note_integrated_bench <MiB>` (`benchmarks/integrated/integrated_bench.cpp`) drives the real `MainWindow`, `DocumentWorkflow`, `EditorView` and renderer in a 1280×800 on-screen window using Qt's native `windows` platform plugin, with `QStandardPaths` test mode so user settings are untouched. The fixture is a deterministic LF text of repeated ~62-byte source-like lines. Keystrokes are `QKeyEvent`s delivered to the editor followed by a synchronous `viewport()->repaint()`; times are CPU-side event+paint costs, **not** input-to-photon latency, and no frame-pacing/vsync data was collected. Five fresh-process runs were made at 10 MiB and three at 50 MiB; values are the median of the per-run medians (run-level p95 in parentheses where useful). Startup/idle used `note.exe` launched 20 times from PowerShell (`Start-Process` to non-zero `MainWindowHandle`, graceful `CloseMainWindow` between runs, warm filesystem cache) and one 60-second idle run with **no document open** (the executable does not take a file argument, so the earlier "one small file" condition could not be reproduced).
+
+| Scenario | 10 MiB (5 runs) | 50 MiB (3 runs) |
+|---|---:|---:|
+| Open to first painted editor | 1,036.7 ms (first run 4,016 ms, cold-ish) | 2,123.7 ms |
+| Keystroke: edit + synchronous repaint, mid-document | 44.1 ms | 25.5 ms (p95 42.5) |
+| — of which edit, model and UI refresh | 1.57 ms | 1.07 ms |
+| — of which viewport repaint | 41.1 ms | 24.5 ms |
+| Unchanged repaint at the edit position | 43.3 ms | 20.2 ms |
+| Page scroll + repaint | 18.5 ms | 11.2 ms (p95 14.8) |
+| Keystroke edit/UI refresh with a closed Find pattern (`compute`) | 9.1 ms | 2.1 ms |
+| Line-number toggle + repaint (settings persist + apply) | 53.3 ms | 27.4 ms |
+| Enable word wrap + repaint | 65.9 ms | 37.0 ms |
+| Save (atomic, with pre-save fingerprint) | 620.5 ms | 1,506.5 ms |
+| Private bytes: window only / after open / after edit+save | 46.3 / 61.5 / 63.7 MiB | 46.3 / 107.9 / 120.3 MiB |
+| Peak working set | 61–71 MiB | 156.4 MiB |
+
+The 10 MiB series ran first, while the machine was paging; its medians are higher than the 50 MiB series and its tails reached seconds (one line-number toggle took 2.68 s). Treat the 10 MiB latencies as noise-inflated. The 50 MiB runs were steadier and are the better indication for this host.
+
+| Startup and idle (`note.exe`, Release) | Result |
+|---|---|
+| Launch to first visible main window, 20 runs (ms) | 2790.2, 1217.4, 1048.6, 1604.1, 1299.7, 855.3, 1060.6, 1756.3, 937.8, 918.9, 1182.5, 1016.6, 865.4, 1042.9, 1094.0, 956.5, 905.7, 1035.5, 1398.9, 1986.2 |
+| Startup median / p95 (nearest-rank) | **1,060.6 ms / 1,986.2 ms** |
+| Idle after 60 s, no document: working set / private bytes (median of 10 samples) | 15.10 MiB / 44.57 MiB |
+| Idle CPU time over the following 60 s | 0.000 s (no measurable idle work) |
+
+**Optimisation made.** `MainWindow::refreshPresentation()` runs after every edit and called `SearchPanel::setActiveView()`, which re-ran the search over the entire document even when the Find dialog was closed. With a pattern set on the 10 MiB fixture this measured **113.3–123.3 ms per keystroke** (median of four runs of the old code; edit/UI refresh only, before repaint). After the change the same scenario measures 2.1 ms at 50 MiB and 1.6–18.8 ms at 10 MiB (the spread is the paging noise above). The panel now re-searches only while visible and discards stale results while hidden.
+
+**Investigated, not changed.** Keystroke cost is dominated by the viewport repaint (~20–25 ms at 50 MiB), which is the same as repainting the unchanged screen at the cursor position. A scrolled page without the caret, current line and occurrence highlights costs ~11 ms. So the cost is painting a caret-bearing screen, not re-work caused by edits. No profiler was available on this host to attribute it further, so no renderer change was made. This misses the provisional 16 ms typing target **on this host**. A real-display key-to-photon and frame-pacing measurement remains outstanding.
+
+**Comparison with earlier results.** The earlier production measurements (startup median 642.7 ms, idle private 50.14 MiB with one small file, 50 MiB async open 844–857 ms in the Core-only benchmark) came from a Ryzen 7 7435HS / 24 GB host with Qt 6.9.1. The figures above come from a slower, memory-constrained machine with Qt 6.12. They measure the full GUI path, not the Core benchmark, so they are not directly comparable and are not evidence of a regression or improvement.
+
+**Status against the provisional targets on this host.** Startup under 300 ms: **Fail** (1,060.6 ms median, warm cache; cold start not measured). Idle memory under 50 MB: **Not comparable** (44.57 MiB private bytes with *no* document; the one-small-file condition could not be reproduced). Typing under 16 ms: **Fail** for CPU-side edit+repaint (25.5 ms median at 50 MiB); input-to-photon **Not measured**. Scrolling without dropped frames at 50 MiB: **Not measured** (11.2 ms CPU per page repaint; no frame-pacing data). Theme/settings changes without buffer recreation: settings toggles applied in 27–53 ms without recreating buffers, and no visible-stall criterion is defined. Theme switching was not timed separately. Long-line, multi-tab stress, cold start, Linux/macOS and reference-device measurements remain outstanding.
