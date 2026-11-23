@@ -38,6 +38,10 @@ public:
     void refreshFromModel();
     [[nodiscard]] bool undo();
     [[nodiscard]] bool redo();
+    [[nodiscard]] bool canUndo() const noexcept { return history_.undoCount() > 0; }
+    [[nodiscard]] bool canRedo() const noexcept { return history_.redoCount() > 0; }
+    void indentSelectedLines();
+    void outdentSelectedLines();
     void beginUndoTransaction();
     void endUndoTransaction();
     void replaceRange(std::size_t offset, std::size_t length,

@@ -57,6 +57,16 @@ void SearchPanel::setActiveView(EditorView* view) {
     runSearch();
 }
 
+void SearchPanel::findNext() {
+    if (matches_.empty()) runSearch();
+    nextMatch();
+}
+
+void SearchPanel::findPrevious() {
+    if (matches_.empty()) runSearch();
+    previousMatch();
+}
+
 void SearchPanel::openFind() {
     replaceEdit_->hide();
     show();

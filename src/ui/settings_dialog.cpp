@@ -25,7 +25,8 @@ SettingsDialog::SettingsDialog(customisation::SettingsManager& settings,
                                customisation::ThemeManager& themes,
                                commands::KeybindingManager& keybindings,
                                std::function<void()> applyCallback,
-                               QWidget* parent)
+                               QWidget* parent,
+                               const commands::CommandRegistry* commandNames)
     : QDialog(parent), settings_(settings), themes_(themes),
       applyCallback_(std::move(applyCallback)), keybindings_(keybindings) {
     setWindowTitle(tr("Settings"));
@@ -193,8 +194,18 @@ SettingsDialog::SettingsDialog(customisation::SettingsManager& settings,
     int row = 0;
     std::vector<std::pair<std::string, QKeySequenceEdit*>> editors;
     for (const auto& binding : keybindings_.bindings()) {
-        keyTable->setItem(row, 0,
-            new QTableWidgetItem(QString::fromStdString(binding.commandId)));
+        auto label = QString::fromStdString(binding.commandId);
+        if (commandNames) {
+            for (const auto& command : commandNames->commands()) {
+                if (command.id != binding.commandId) continue;
+                label = QStringLiteral("%1: %2").arg(QString::fromStdString(command.category),
+                                                     QString::fromStdString(command.text));
+                break;
+            }
+        }
+        auto* item = new QTableWidgetItem(label);
+        item->setToolTip(QString::fromStdString(binding.commandId));
+        keyTable->setItem(row, 0, item);
         auto* edit = new QKeySequenceEdit(binding.sequence, keyPage);
         edit->setObjectName(QString::fromStdString(binding.commandId));
         keyTable->setCellWidget(row, 1, edit);

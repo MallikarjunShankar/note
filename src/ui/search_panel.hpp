@@ -18,6 +18,8 @@ public:
     void setActiveView(EditorView* view);
     void openFind();
     void openReplace();
+    void findNext();
+    void findPrevious();
 
 private:
     void runSearch();
