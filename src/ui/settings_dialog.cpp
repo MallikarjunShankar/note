@@ -20,6 +20,8 @@
 #include <QTableWidget>
 #include <QKeySequenceEdit>
 #include <QAbstractItemView>
+#include <QGuiApplication>
+#include <QScreen>
 
 namespace note::ui {
 
@@ -33,7 +35,13 @@ SettingsDialog::SettingsDialog(customisation::SettingsManager& settings,
       applyCallback_(std::move(applyCallback)), keybindings_(keybindings) {
     setWindowTitle(tr("Settings"));
     setObjectName(QStringLiteral("settingsDialog"));
-    resize(620, 520);
+    const auto* screen = QGuiApplication::primaryScreen();
+    if (screen) {
+        const auto available = screen->availableGeometry();
+        resize(qMin(620, available.width()), qMin(520, available.height()));
+    } else {
+        resize(620, 520);
+    }
     connect(&themes_, &customisation::ThemeManager::themeChanged,
             this, [this](const customisation::NoteTheme&) {
         if (applyCallback_) applyCallback_();
