@@ -6,6 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(Qt6 6.5 REQUIRED COMPONENTS Core Widgets)
+set(CMAKE_AUTOUIC OFF)
 qt_standard_project_setup()
 
 add_library(note_core
@@ -26,6 +27,12 @@ target_link_libraries(note_core PUBLIC Qt6::Core)
 
 add_library(note_app_core
     src/application/document_workflow.cpp
+    src/commands/command_registry.cpp
+    src/commands/keybinding_manager.cpp
+    src/commands/shortcut_dispatcher.cpp
+    src/customisation/settings_manager.cpp
+    src/customisation/theme_manager.cpp
+    src/search/search_engine.cpp
     src/platform/file_monitor.cpp
     src/platform/launch_services.cpp
 )
@@ -42,6 +49,18 @@ qt_add_executable(note
     src/ui/editor_view.hpp
     src/ui/main_window.cpp
     src/ui/main_window.hpp
+    src/ui/command_palette.cpp
+    src/ui/command_palette.hpp
+    src/ui/search_panel.cpp
+    src/ui/search_panel.hpp
+    src/ui/settings_dialog.cpp
+    src/ui/settings_dialog.hpp
+    src/ui/command_palette.cpp
+    src/ui/command_palette.hpp
+    src/ui/search_panel.cpp
+    src/ui/search_panel.hpp
+    src/ui/settings_dialog.cpp
+    src/ui/settings_dialog.hpp
 )
 
 target_link_libraries(note PRIVATE note_app_core Qt6::Widgets)
@@ -67,6 +86,18 @@ if(BUILD_TESTING)
     add_executable(note_undo_redo_tests tests/editor/undo_redo_manager_tests.cpp)
     target_link_libraries(note_undo_redo_tests PRIVATE note_core)
     add_test(NAME note_undo_redo_tests COMMAND note_undo_redo_tests)
+
+    add_executable(note_command_tests tests/commands/command_system_tests.cpp)
+    target_link_libraries(note_command_tests PRIVATE note_app_core Qt6::Widgets)
+    add_test(NAME note_command_tests COMMAND note_command_tests)
+
+    add_executable(note_customisation_tests tests/customisation/customisation_tests.cpp)
+    target_link_libraries(note_customisation_tests PRIVATE note_app_core Qt6::Widgets)
+    add_test(NAME note_customisation_tests COMMAND note_customisation_tests)
+
+    add_executable(note_search_tests tests/search/search_tests.cpp)
+    target_link_libraries(note_search_tests PRIVATE note_app_core)
+    add_test(NAME note_search_tests COMMAND note_search_tests)
 
     add_executable(note_ui_renderer_tests
         tests/ui/editor_renderer_tests.cpp
@@ -96,6 +127,12 @@ if(BUILD_TESTING)
         src/ui/editor_view.hpp
         src/ui/main_window.cpp
         src/ui/main_window.hpp
+        src/ui/command_palette.cpp
+        src/ui/command_palette.hpp
+        src/ui/search_panel.cpp
+        src/ui/search_panel.hpp
+        src/ui/settings_dialog.cpp
+        src/ui/settings_dialog.hpp
     )
     target_include_directories(note_ui_smoke_tests PRIVATE src)
     target_link_libraries(note_ui_smoke_tests PRIVATE note_app_core Qt6::Widgets)

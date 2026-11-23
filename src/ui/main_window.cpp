@@ -3,7 +3,11 @@
 #include "documents/document.hpp"
 #include "platform/launch_services.hpp"
 #include "platform/path_resolver.hpp"
+#include "commands/shortcut_dispatcher.hpp"
+#include "ui/command_palette.hpp"
 #include "ui/editor_view.hpp"
+#include "ui/search_panel.hpp"
+#include "ui/settings_dialog.hpp"
 
 #include <QAction>
 #include <QCloseEvent>
@@ -21,11 +25,18 @@
 #include <QMessageBox>
 #include <QPushButton>
 #include <QProgressDialog>
+#include <QContextMenuEvent>
+#include <QKeyEvent>
 #include <QStackedWidget>
 #include <QStatusBar>
+#include <QStandardPaths>
+#include <QDir>
 #include <QTabBar>
 #include <QVBoxLayout>
 #include <QWidget>
+#include <QToolBar>
+#include <QPalette>
+#include <QFontMetrics>
 #include <QUrl>
 
 #include <cstdint>
@@ -45,7 +56,14 @@ QString fromUtf8(const std::string& value) {
 } // namespace
 
 MainWindow::MainWindow(application::DocumentWorkflow& workflow, QWidget* parent)
-    : QMainWindow(parent), workflow_(workflow) {
+    : QMainWindow(parent), workflow_(workflow),
+      settingsManager_(QDir(QStandardPaths::writableLocation(
+                             QStandardPaths::AppDataLocation)).filePath(QStringLiteral("settings.ini"))),
+      themeManager_(QDir(QStandardPaths::writableLocation(
+                             QStandardPaths::AppDataLocation)).filePath(QStringLiteral("themes")), this),
+      keybindingManager_(QDir(QStandardPaths::writableLocation(
+                              QStandardPaths::AppDataLocation)).filePath(QStringLiteral("keybindings.ini"))),
+      shortcutDispatcher_(commandRegistry_, keybindingManager_) {
     setAcceptDrops(true);
     setWindowTitle(tr("Note"));
     resize(1000, 700);
@@ -76,7 +94,12 @@ MainWindow::MainWindow(application::DocumentWorkflow& workflow, QWidget* parent)
 
     status_ = new QLabel(this);
     statusBar()->addPermanentWidget(status_);
+    settingsManager_.load();
+    keybindingManager_.load();
+    searchPanel_ = new SearchPanel(this);
+    searchPanel_->hide();
     createActions();
+    applyCustomisation();
     workflow_.setExternalFileChangeCallback([this](documents::DocumentId id,
                                                     documents::ExternalFileState state) {
         showExternalFileChange(id, state);
@@ -100,42 +123,70 @@ MainWindow::MainWindow(application::DocumentWorkflow& workflow, QWidget* parent)
 MainWindow::~MainWindow() { workflow_.setExternalFileChangeCallback({}); }
 
 void MainWindow::createActions() {
+    keybindingManager_.setDefault("file.new", QKeySequence::New);
+    keybindingManager_.setDefault("file.open", QKeySequence::Open);
+    keybindingManager_.setDefault("file.save", QKeySequence::Save);
+    keybindingManager_.setDefault("file.saveAs", QKeySequence::SaveAs);
+    keybindingManager_.setDefault("file.close", QKeySequence::Close);
+    keybindingManager_.setDefault("search.find", QKeySequence::Find);
+    keybindingManager_.setDefault("search.replace", QKeySequence::Replace);
+    keybindingManager_.setDefault("settings.open", QKeySequence(Qt::CTRL | Qt::Key_Comma));
+    keybindingManager_.setDefault("commands.palette",
+                                  QKeySequence(Qt::CTRL | Qt::Key_P));
+
     auto* fileMenu = menuBar()->addMenu(tr("&File"));
+    auto registerAction = [this](QAction* action, const char* id,
+                                 const char* category, const char* description,
+                                 commands::CommandRegistry::Enabled enabled = {}) {
+        const auto commandId = std::string(id);
+        action->setObjectName(QString::fromLatin1(id).replace(QLatin1Char('.'), QLatin1Char('_')) +
+                              QStringLiteral("Action"));
+        action->setShortcut(keybindingManager_.binding(commandId));
+        commandActions_[commandId] = action;
+        commandRegistry_.registerCommand(
+            {commandId, action->text().remove(QLatin1Char('&')).toStdString(),
+             category, description},
+            [action] { action->trigger(); }, std::move(enabled));
+    };
+
     auto* newAction = fileMenu->addAction(tr("&New"));
-    newAction->setObjectName(QStringLiteral("newDocumentAction"));
-    newAction->setShortcut(QKeySequence::New);
+    registerAction(newAction, "file.new", "File", "Create a new document");
     connect(newAction, &QAction::triggered, this, [this] {
         (void)workflow_.createNew();
         refresh();
     });
 
     auto* openAction = fileMenu->addAction(tr("&Open…"));
-    openAction->setObjectName(QStringLiteral("openDocumentAction"));
-    openAction->setShortcut(QKeySequence::Open);
+    registerAction(openAction, "file.open", "File", "Open a file");
     connect(openAction, &QAction::triggered, this, [this] { openFile(); });
 
     fileMenu->addSeparator();
     saveAction_ = fileMenu->addAction(tr("&Save"));
-    saveAction_->setObjectName(QStringLiteral("saveDocumentAction"));
-    saveAction_->setShortcut(QKeySequence::Save);
+    registerAction(saveAction_, "file.save", "File", "Save the active document",
+                   [this] { return workflow_.activeDocument() != nullptr; });
     connect(saveAction_, &QAction::triggered, this, [this] { saveActive(); });
 
     saveAsAction_ = fileMenu->addAction(tr("Save &As…"));
-    saveAsAction_->setObjectName(QStringLiteral("saveAsDocumentAction"));
-    saveAsAction_->setShortcut(QKeySequence::SaveAs);
+    registerAction(saveAsAction_, "file.saveAs", "File", "Save the active document as",
+                   [this] { return workflow_.activeDocument() != nullptr; });
     connect(saveAsAction_, &QAction::triggered, this, [this] { saveActiveAs(); });
 
     fileMenu->addSeparator();
     closeAction_ = fileMenu->addAction(tr("&Close Tab"));
-    closeAction_->setObjectName(QStringLiteral("closeDocumentAction"));
-    closeAction_->setShortcut(QKeySequence::Close);
+    registerAction(closeAction_, "file.close", "File", "Close the active document",
+                   [this] { return workflow_.activeDocument() != nullptr; });
     connect(closeAction_, &QAction::triggered, this, [this] {
         if (const auto* active = workflow_.activeDocument()) closeDocument(active->id());
     });
 
     fileMenu->addSeparator();
     externalOpenAction_ = fileMenu->addAction(tr("Open in External Application"));
-    externalOpenAction_->setObjectName(QStringLiteral("openExternalApplicationAction"));
+    registerAction(externalOpenAction_, "file.external",
+                   "File", "Open the active file in an external application",
+                   [this] {
+                       const auto* document = workflow_.activeDocument();
+                       return document && document->metadata().path.has_value();
+                   });
     connect(externalOpenAction_, &QAction::triggered, this, [this] {
         const auto* document = workflow_.activeDocument();
         if (!document || !document->metadata().path) return;
@@ -143,7 +194,12 @@ void MainWindow::createActions() {
         if (!result.success) showError(tr("Could not open the file externally: %1").arg(fromUtf8(result.error)));
     });
     terminalAction_ = fileMenu->addAction(tr("Open Terminal Here"));
-    terminalAction_->setObjectName(QStringLiteral("openTerminalAction"));
+    registerAction(terminalAction_, "file.terminal",
+                   "File", "Open a terminal in the active document directory",
+                   [this] {
+                       const auto* document = workflow_.activeDocument();
+                       return document && document->metadata().path.has_value();
+                   });
     connect(terminalAction_, &QAction::triggered, this, [this] {
         const auto* document = workflow_.activeDocument();
         if (!document || !document->metadata().path) return;
@@ -151,6 +207,88 @@ void MainWindow::createActions() {
         const auto result = platform::openTerminalInDirectory(directory);
         if (!result.success) showError(tr("Could not open a terminal: %1").arg(fromUtf8(result.error)));
     });
+
+    auto* editMenu = menuBar()->addMenu(tr("&Edit"));
+    auto* undoAction = editMenu->addAction(tr("&Undo"));
+    registerAction(undoAction, "edit.undo", "Edit", "Undo the active edit");
+    connect(undoAction, &QAction::triggered, this, [this] {
+        if (auto* view = activeEditorView()) (void)view->undo();
+    });
+    undoAction->setShortcut(QKeySequence::Undo);
+    auto* redoAction = editMenu->addAction(tr("&Redo"));
+    registerAction(redoAction, "edit.redo", "Edit", "Redo the active edit");
+    connect(redoAction, &QAction::triggered, this, [this] {
+        if (auto* view = activeEditorView()) (void)view->redo();
+    });
+    redoAction->setShortcut(QKeySequence::Redo);
+    editMenu->addSeparator();
+    auto* findAction = editMenu->addAction(tr("&Find"));
+    registerAction(findAction, "search.find", "Search", "Find in the active document");
+    connect(findAction, &QAction::triggered, this, [this] { showFind(); });
+    auto* replaceAction = editMenu->addAction(tr("&Replace"));
+    registerAction(replaceAction, "search.replace", "Search", "Find and replace in the active document");
+    connect(replaceAction, &QAction::triggered, this, [this] { showReplace(); });
+
+    auto* viewMenu = menuBar()->addMenu(tr("&View"));
+    auto* lineNumbers = viewMenu->addAction(tr("Line Numbers"));
+    lineNumbers->setCheckable(true);
+    lineNumbers->setChecked(settingsManager_.settings().lineNumbers);
+    registerAction(lineNumbers, "view.lineNumbers", "View", "Toggle line numbers");
+    connect(lineNumbers, &QAction::toggled, this, [this](bool checked) {
+        auto value = settingsManager_.settings();
+        value.lineNumbers = checked;
+        settingsManager_.setSettings(value);
+        settingsManager_.save();
+        applyCustomisation();
+    });
+    auto* whitespace = viewMenu->addAction(tr("Whitespace"));
+    whitespace->setCheckable(true);
+    whitespace->setChecked(settingsManager_.settings().whitespaceVisible);
+    registerAction(whitespace, "view.whitespace", "View", "Toggle whitespace markers");
+    connect(whitespace, &QAction::toggled, this, [this](bool checked) {
+        auto value = settingsManager_.settings();
+        value.whitespaceVisible = checked;
+        settingsManager_.setSettings(value);
+        settingsManager_.save();
+        applyCustomisation();
+    });
+    auto* guides = viewMenu->addAction(tr("Indentation Guides"));
+    guides->setCheckable(true);
+    guides->setChecked(settingsManager_.settings().indentationGuides);
+    registerAction(guides, "view.indentationGuides", "View", "Toggle indentation guides");
+    connect(guides, &QAction::toggled, this, [this](bool checked) {
+        auto value = settingsManager_.settings();
+        value.indentationGuides = checked;
+        settingsManager_.setSettings(value);
+        settingsManager_.save();
+        applyCustomisation();
+    });
+    auto* wrap = viewMenu->addAction(tr("Word Wrap"));
+    wrap->setCheckable(true);
+    wrap->setChecked(settingsManager_.settings().wordWrap);
+    registerAction(wrap, "view.wordWrap", "View", "Toggle word wrapping");
+    connect(wrap, &QAction::toggled, this, [this](bool checked) {
+        auto value = settingsManager_.settings();
+        value.wordWrap = checked;
+        settingsManager_.setSettings(value);
+        settingsManager_.save();
+        applyCustomisation();
+    });
+
+    auto* settingsMenu = menuBar()->addMenu(tr("&Settings"));
+    auto* settingsAction = settingsMenu->addAction(tr("&Preferences"));
+    registerAction(settingsAction, "settings.open", "Settings", "Open settings");
+    connect(settingsAction, &QAction::triggered, this, [this] { showSettings(); });
+    auto* paletteAction = settingsMenu->addAction(tr("Command &Palette"));
+    registerAction(paletteAction, "commands.palette", "Commands", "Search and execute commands");
+    connect(paletteAction, &QAction::triggered, this, [this] {
+        CommandPalette palette(commandRegistry_, this);
+        palette.exec();
+    });
+
+    toolBar_ = addToolBar(tr("Main Toolbar"));
+    toolBar_->setObjectName(QStringLiteral("mainToolbar"));
+    toolBar_->setMovable(false);
 }
 
 QString MainWindow::displayName(const documents::Document& document) const {
@@ -182,6 +320,110 @@ void MainWindow::refresh() {
     refreshPresentation();
 }
 
+EditorView* MainWindow::activeEditorView() {
+    const auto* document = workflow_.activeDocument();
+    if (!document) return nullptr;
+    const auto found = editorViews_.find(document->id());
+    return found == editorViews_.end() ? nullptr : found->second.view;
+}
+
+void MainWindow::showFind() {
+    if (!searchPanel_) return;
+    searchPanel_->setActiveView(activeEditorView());
+    searchPanel_->openFind();
+}
+
+void MainWindow::showReplace() {
+    if (!searchPanel_) return;
+    searchPanel_->setActiveView(activeEditorView());
+    searchPanel_->openReplace();
+}
+
+void MainWindow::showSettings() {
+    SettingsDialog dialog(settingsManager_, themeManager_, keybindingManager_,
+                          [this] { applyCustomisation(); }, this);
+    dialog.exec();
+}
+
+void MainWindow::applyCustomisation() {
+    const auto& value = settingsManager_.settings();
+    const auto theme = themeManager_.loadTheme(value.themeName);
+    for (const auto& [commandId, action] : commandActions_)
+        action->setShortcut(keybindingManager_.binding(commandId));
+    QPalette palette;
+    palette.setColor(QPalette::Window, theme.window);
+    palette.setColor(QPalette::Base, theme.background);
+    palette.setColor(QPalette::Text, theme.foreground);
+    palette.setColor(QPalette::Highlight, theme.selection);
+    palette.setColor(QPalette::HighlightedText, theme.foreground);
+    palette.setColor(QPalette::Button, theme.menu);
+    palette.setColor(QPalette::ButtonText, theme.foreground);
+    setPalette(palette);
+    setStyleSheet(QStringLiteral(
+        "QMenuBar, QMenu, QStatusBar, QToolBar { background-color: %1; color: %2; }"
+        "QTabBar::tab { background: %3; color: %2; }"
+        "QTabBar::tab:selected { background: %4; }")
+        .arg(theme.menu.name(), theme.foreground.name(),
+             theme.tab.name(), theme.activeTab.name()));
+    statusBar()->setVisible(value.statusBarVisible);
+    menuBar()->setVisible(value.menuVisible);
+    if (toolBar_) {
+        toolBar_->clear();
+        toolBar_->setVisible(value.toolbarVisible);
+        for (const auto& id : value.toolbarActions) {
+            const auto found = commandActions_.find(id.toStdString());
+            if (found != commandActions_.end()) toolBar_->addAction(found->second);
+        }
+    }
+
+    QFont font(value.fontFamily);
+    font.setPointSize(value.fontSize);
+    font.setWeight(static_cast<QFont::Weight>(value.fontWeight));
+    const auto baseHeight = QFontMetrics(font).height();
+    const int lineHeight = std::max(1, baseHeight *
+                                        value.lineSpacing / 100 + 2);
+    for (auto& binding : editorViews_) {
+        auto* view = binding.second.view;
+        auto configuration = view->renderer()->configuration();
+        configuration.font = font;
+        configuration.lineHeight = lineHeight;
+        configuration.tabWidth = value.indentationWidth;
+        configuration.lineNumbers = value.lineNumbers;
+        configuration.relativeLineNumbers = value.relativeLineNumbers;
+        configuration.currentLineHighlight = value.currentLineHighlight;
+        configuration.indentationGuides = value.indentationGuides;
+        configuration.showWhitespace = value.whitespaceVisible;
+        configuration.matchingOccurrences = value.matchingOccurrences;
+        configuration.wordWrap = value.wordWrap;
+        configuration.foreground = theme.foreground;
+        configuration.background = theme.background;
+        configuration.selection = theme.selection;
+        configuration.caret = theme.cursor;
+        configuration.matchingBracket = theme.matchingBracket;
+        configuration.currentLine = theme.currentLine;
+        configuration.lineNumber = theme.lineNumber;
+        configuration.activeLineNumber = theme.activeLineNumber;
+        configuration.indentationGuide = theme.indentationGuide;
+        configuration.whitespace = theme.whitespace;
+        configuration.matchingOccurrence = theme.matchingOccurrence;
+        configuration.searchMatch = theme.searchMatch;
+        view->renderer()->setConfiguration(configuration);
+        editor::BracketConfiguration brackets;
+        brackets.parentheses = value.pairing.contains("round") ? value.pairing.at("round") : true;
+        brackets.squareBrackets = value.pairing.contains("square") ? value.pairing.at("square") : true;
+        brackets.curlyBraces = value.pairing.contains("curly") ? value.pairing.at("curly") : true;
+        brackets.doubleQuotes = value.pairing.contains("doubleQuote") ? value.pairing.at("doubleQuote") : true;
+        brackets.singleQuotes = value.pairing.contains("singleQuote") ? value.pairing.at("singleQuote") : true;
+        if (!value.automaticPairing) {
+            brackets.parentheses = brackets.squareBrackets =
+                brackets.curlyBraces = brackets.doubleQuotes =
+                brackets.singleQuotes = false;
+        }
+        view->setBracketConfiguration(brackets);
+    }
+    if (searchPanel_) searchPanel_->setActiveView(activeEditorView());
+}
+
 void MainWindow::refreshFromModel() {
     refresh();
 }
@@ -201,6 +443,7 @@ void MainWindow::refreshPresentation() {
     const bool hasPath = hasDocument && document->metadata().path.has_value();
     externalOpenAction_->setEnabled(hasPath);
     terminalAction_->setEnabled(hasPath);
+    if (searchPanel_) searchPanel_->setActiveView(activeEditorView());
 
     if (!document) {
         setWindowTitle(tr("Note"));
@@ -247,6 +490,7 @@ void MainWindow::syncEditorViews() {
         delete it->second.view;
         it = editorViews_.erase(it);
     }
+    applyCustomisation();
 }
 
 void MainWindow::refreshAfterEdit(documents::DocumentId id) {
@@ -578,6 +822,9 @@ void MainWindow::showSaveConflict(documents::DocumentId id, const QString& messa
 }
 
 bool MainWindow::event(QEvent* event) {
+    if (event->type() == QEvent::KeyPress &&
+        shortcutDispatcher_.dispatch(static_cast<QKeyEvent*>(event)))
+        return true;
     if (event->type() == QEvent::WindowActivate || event->type() == QEvent::ApplicationActivate)
         workflow_.checkExternalChanges();
     return QMainWindow::event(event);
@@ -597,6 +844,19 @@ void MainWindow::dropEvent(QDropEvent* event) {
     }
     if (openedAny) event->acceptProposedAction();
     else QMainWindow::dropEvent(event);
+}
+
+void MainWindow::contextMenuEvent(QContextMenuEvent* event) {
+    QMenu menu(this);
+    for (const auto& command : commandRegistry_.commands()) {
+        if (!commandRegistry_.isEnabled(command.id)) continue;
+        if (command.category != "Edit" && command.category != "Search") continue;
+        menu.addAction(QString::fromStdString(command.text),
+                       [this, id = command.id] {
+                           (void)commandRegistry_.execute(id);
+                       });
+    }
+    menu.exec(event->globalPos());
 }
 
 void MainWindow::closeEvent(QCloseEvent* event) {

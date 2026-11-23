@@ -1,10 +1,16 @@
 #pragma once
 
 #include "application/document_workflow.hpp"
+#include "commands/command_registry.hpp"
+#include "commands/keybinding_manager.hpp"
+#include "commands/shortcut_dispatcher.hpp"
+#include "customisation/settings_manager.hpp"
+#include "customisation/theme_manager.hpp"
 
 #include <QMainWindow>
 #include <cstdint>
 #include <map>
+#include <memory>
 
 class QCloseEvent;
 class QDragEnterEvent;
@@ -15,10 +21,14 @@ class QTabBar;
 class QLabel;
 class QProgressDialog;
 class QStackedWidget;
+class QToolBar;
+class QContextMenuEvent;
 
 namespace note::ui {
 
 class EditorView;
+class SearchPanel;
+class SettingsDialog;
 
 class MainWindow final : public QMainWindow {
     Q_OBJECT
@@ -34,6 +44,7 @@ protected:
     bool event(QEvent* event) override;
     void dragEnterEvent(QDragEnterEvent* event) override;
     void dropEvent(QDropEvent* event) override;
+    void contextMenuEvent(QContextMenuEvent* event) override;
 
 private:
     void createActions();
@@ -51,6 +62,11 @@ private:
     void showExternalFileChange(documents::DocumentId id, documents::ExternalFileState state);
     void showSaveConflict(documents::DocumentId id, const QString& message);
     void saveDocumentAs(documents::DocumentId id);
+    void showFind();
+    void showReplace();
+    void showSettings();
+    void applyCustomisation();
+    EditorView* activeEditorView();
     void createOpenProgress(application::DocumentWorkflow::OpenRequestId id, const QString& label);
     void updateOpenProgress(application::DocumentWorkflow::OpenRequestId id, documents::OpenProgress progress);
     void finishOpenProgress(application::DocumentWorkflow::OpenRequestId id);
@@ -63,6 +79,7 @@ private:
     QStackedWidget* editorStack_{};
     QWidget* emptyEditor_{};
     QLabel* status_{};
+    QToolBar* toolBar_{};
     QAction* saveAction_{};
     QAction* saveAsAction_{};
     QAction* closeAction_{};
@@ -75,6 +92,13 @@ private:
         EditorView* view{};
     };
     std::map<documents::DocumentId, EditorBinding> editorViews_;
+    commands::CommandRegistry commandRegistry_;
+    customisation::SettingsManager settingsManager_;
+    customisation::ThemeManager themeManager_;
+    commands::KeybindingManager keybindingManager_;
+    commands::ShortcutDispatcher shortcutDispatcher_;
+    SearchPanel* searchPanel_{};
+    std::map<std::string, QAction*> commandActions_;
 };
 
 } // namespace note::ui
