@@ -4,6 +4,7 @@
 #include <QObject>
 #include <QString>
 
+#include <optional>
 #include <unordered_map>
 #include <vector>
 
@@ -40,14 +41,17 @@ public:
     [[nodiscard]] const NoteTheme& fallbackTheme() const noexcept { return darkTheme_; }
     [[nodiscard]] NoteTheme loadTheme(const QString& name) const;
     [[nodiscard]] bool validateTheme(const NoteTheme& theme) const;
+    bool setPreviewTheme(NoteTheme theme);
+    void clearPreviewTheme() noexcept;
     bool saveTheme(const NoteTheme& theme);
-    bool importTheme(const QString& sourcePath);
+    bool importTheme(const QString& sourcePath, QString* importedName = nullptr);
     bool exportTheme(const NoteTheme& theme, const QString& destinationPath) const;
 signals:
     void themeChanged(const NoteTheme& theme);
 
 private:
     NoteTheme darkTheme_;
+    std::optional<NoteTheme> previewTheme_;
     QString themeDirectory_;
     void initialiseThemes();
 };

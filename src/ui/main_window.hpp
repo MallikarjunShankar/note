@@ -43,6 +43,7 @@ public:
     // Called after model changes made outside the active editor.
     void refreshFromModel();
     void openPath(const std::filesystem::path& path);
+    void preserveSessionOnApplicationQuit();
 
 protected:
     void closeEvent(QCloseEvent* event) override;
@@ -72,6 +73,7 @@ private:
     void showReplace();
     void showSettings();
     void applyCustomisation();
+    void showContextMenuAt(const QPoint& globalPosition);
     EditorView* activeEditorView();
     [[nodiscard]] application::SessionState captureSessionState() const;
     [[nodiscard]] std::vector<application::RecoveryDocument> captureRecoveryDocuments();

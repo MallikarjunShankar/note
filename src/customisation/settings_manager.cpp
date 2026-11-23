@@ -29,7 +29,18 @@ void SettingsManager::validate(NoteSettings& value) const {
     value.editorZoom = std::clamp(value.editorZoom, 50, 300);
     value.indentationWidth = std::clamp(value.indentationWidth, 1, 16);
     if (value.indentationStyle != "tabs") value.indentationStyle = "spaces";
-    if (value.themeName.isEmpty()) value.themeName = "Dark";
+    bool safeThemeName = !value.themeName.isEmpty() &&
+                         value.themeName.size() <= 64 &&
+                         value.themeName.trimmed() == value.themeName &&
+                         value.themeName != "." && value.themeName != "..";
+    for (const auto character : value.themeName) {
+        if (character.isNull() ||
+            character.category() == QChar::Other_Control ||
+            QStringLiteral("<>:\"/\\|?*").contains(character))
+            safeThemeName = false;
+    }
+    if (!safeThemeName)
+        value.themeName = "Dark";
     if (value.fontFamily.isEmpty())
         value.fontFamily = QFontDatabase::systemFont(QFontDatabase::FixedFont).family();
 }

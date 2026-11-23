@@ -100,6 +100,11 @@ if(BUILD_TESTING)
     target_link_libraries(note_search_tests PRIVATE note_app_core)
     add_test(NAME note_search_tests COMMAND note_search_tests)
 
+    add_executable(note_platform_services_tests
+        tests/platform/platform_services_tests.cpp)
+    target_link_libraries(note_platform_services_tests PRIVATE note_app_core)
+    add_test(NAME note_platform_services_tests COMMAND note_platform_services_tests)
+
     add_executable(note_ui_renderer_tests
         tests/ui/editor_renderer_tests.cpp
         src/ui/editor_renderer.cpp
@@ -204,6 +209,7 @@ if(MSVC)
         target_compile_options(note_ui_renderer_tests PRIVATE /W4 /permissive-)
         target_compile_options(note_document_tests PRIVATE /W4 /permissive-)
         target_compile_options(note_document_workflow_tests PRIVATE /W4 /permissive-)
+        target_compile_options(note_platform_services_tests PRIVATE /W4 /permissive-)
         target_compile_options(note_ui_smoke_tests PRIVATE /W4 /permissive-)
         target_compile_options(note_document_bench PRIVATE /W4 /permissive-)
         target_compile_options(note_async_open_bench PRIVATE /W4 /permissive-)
@@ -222,6 +228,7 @@ else()
         target_compile_options(note_ui_renderer_tests PRIVATE -Wall -Wextra -Wpedantic)
         target_compile_options(note_document_tests PRIVATE -Wall -Wextra -Wpedantic)
         target_compile_options(note_document_workflow_tests PRIVATE -Wall -Wextra -Wpedantic)
+        target_compile_options(note_platform_services_tests PRIVATE -Wall -Wextra -Wpedantic)
         target_compile_options(note_ui_smoke_tests PRIVATE -Wall -Wextra -Wpedantic)
         target_compile_options(note_document_bench PRIVATE -O2 -Wall -Wextra -Wpedantic)
         target_compile_options(note_async_open_bench PRIVATE -O2 -Wall -Wextra -Wpedantic)

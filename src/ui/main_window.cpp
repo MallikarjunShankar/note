@@ -16,6 +16,7 @@
 #include <QEvent>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFontMetricsF>
 #include <QHBoxLayout>
 #include <QKeySequence>
 #include <QLabel>
@@ -25,6 +26,7 @@
 #include <QMessageBox>
 #include <QPushButton>
 #include <QProgressDialog>
+#include <QSignalBlocker>
 #include <QContextMenuEvent>
 #include <QKeyEvent>
 #include <QStackedWidget>
@@ -101,7 +103,6 @@ MainWindow::MainWindow(application::DocumentWorkflow& workflow,
     status_ = new QLabel(this);
     statusBar()->addPermanentWidget(status_);
     settingsManager_.load();
-    keybindingManager_.load();
     searchPanel_ = new SearchPanel(this);
     searchPanel_->hide();
     createActions();
@@ -110,6 +111,15 @@ MainWindow::MainWindow(application::DocumentWorkflow& workflow,
                                                     documents::ExternalFileState state) {
         showExternalFileChange(id, state);
     });
+    workflow_.setExternalFileInspectionErrorCallback(
+        [this](documents::DocumentId id, const std::string& error) {
+            const auto* document = workflow_.findDocument(id);
+            const auto name = document && document->metadata().path
+                ? platform::pathToQString(*document->metadata().path)
+                : tr("document");
+            status_->setText(tr("Could not check %1: %2")
+                                 .arg(name, fromUtf8(error)));
+        });
     if (sessionRecovery_) {
         connect(sessionRecovery_, &application::SessionRecoveryService::persistenceError,
                 this, [this](const QString& message) {
@@ -142,6 +152,7 @@ MainWindow::MainWindow(application::DocumentWorkflow& workflow,
 
 MainWindow::~MainWindow() {
     workflow_.setExternalFileChangeCallback({});
+    workflow_.setExternalFileInspectionErrorCallback({});
     if (sessionRecovery_) sessionRecovery_->clearProviders();
 }
 
@@ -151,11 +162,20 @@ void MainWindow::createActions() {
     keybindingManager_.setDefault("file.save", QKeySequence::Save);
     keybindingManager_.setDefault("file.saveAs", QKeySequence::SaveAs);
     keybindingManager_.setDefault("file.close", QKeySequence::Close);
+    keybindingManager_.setDefault("file.external", {});
+    keybindingManager_.setDefault("file.terminal", {});
+    keybindingManager_.setDefault("edit.undo", QKeySequence::Undo);
+    keybindingManager_.setDefault("edit.redo", QKeySequence::Redo);
     keybindingManager_.setDefault("search.find", QKeySequence::Find);
     keybindingManager_.setDefault("search.replace", QKeySequence::Replace);
+    keybindingManager_.setDefault("view.lineNumbers", {});
+    keybindingManager_.setDefault("view.whitespace", {});
+    keybindingManager_.setDefault("view.indentationGuides", {});
+    keybindingManager_.setDefault("view.wordWrap", {});
     keybindingManager_.setDefault("settings.open", QKeySequence(Qt::CTRL | Qt::Key_Comma));
     keybindingManager_.setDefault("commands.palette",
                                   QKeySequence(Qt::CTRL | Qt::Key_P));
+    keybindingManager_.load();
 
     auto* fileMenu = menuBar()->addMenu(tr("&File"));
     auto registerAction = [this](QAction* action, const char* id,
@@ -242,13 +262,11 @@ void MainWindow::createActions() {
     connect(undoAction, &QAction::triggered, this, [this] {
         if (auto* view = activeEditorView()) (void)view->undo();
     });
-    undoAction->setShortcut(QKeySequence::Undo);
     auto* redoAction = editMenu->addAction(tr("&Redo"));
     registerAction(redoAction, "edit.redo", "Edit", "Redo the active edit");
     connect(redoAction, &QAction::triggered, this, [this] {
         if (auto* view = activeEditorView()) (void)view->redo();
     });
-    redoAction->setShortcut(QKeySequence::Redo);
     editMenu->addSeparator();
     auto* findAction = editMenu->addAction(tr("&Find"));
     registerAction(findAction, "search.find", "Search", "Find in the active document");
@@ -558,11 +576,25 @@ void MainWindow::applyCustomisation() {
     palette.setColor(QPalette::ButtonText, theme.foreground);
     setPalette(palette);
     setStyleSheet(QStringLiteral(
-        "QMenuBar, QMenu, QStatusBar, QToolBar { background-color: %1; color: %2; }"
+        "QMenuBar, QMenu, QToolBar { background-color: %1; color: %2; }"
+        "QStatusBar { background-color: %5; color: %2; }"
         "QTabBar::tab { background: %3; color: %2; }"
         "QTabBar::tab:selected { background: %4; }")
         .arg(theme.menu.name(), theme.foreground.name(),
-             theme.tab.name(), theme.activeTab.name()));
+             theme.tab.name(), theme.activeTab.name(), theme.status.name()));
+    const std::pair<const char*, bool> presentationCommands[] = {
+        {"view.lineNumbers", value.lineNumbers},
+        {"view.whitespace", value.whitespaceVisible},
+        {"view.indentationGuides", value.indentationGuides},
+        {"view.wordWrap", value.wordWrap}
+    };
+    for (const auto& [id, checked] : presentationCommands) {
+        const auto found = commandActions_.find(id);
+        if (found != commandActions_.end()) {
+            const QSignalBlocker blocker(found->second);
+            found->second->setChecked(checked);
+        }
+    }
     statusBar()->setVisible(value.statusBarVisible);
     menuBar()->setVisible(value.menuVisible);
     if (toolBar_) {
@@ -575,13 +607,16 @@ void MainWindow::applyCustomisation() {
     }
 
     QFont font(value.fontFamily);
-    font.setPointSize(value.fontSize);
+    font.setPointSizeF(value.fontSize * value.editorZoom / 100.0);
     font.setWeight(static_cast<QFont::Weight>(value.fontWeight));
-    const auto baseHeight = QFontMetrics(font).height();
-    const int lineHeight = std::max(1, baseHeight *
-                                        value.lineSpacing / 100 + 2);
+    const auto baseHeight = QFontMetricsF(font).height();
+    const int lineHeight = std::max(1, static_cast<int>(std::ceil(
+        baseHeight * value.lineSpacing / 100.0 + 2.0)));
     for (auto& binding : editorViews_) {
         auto* view = binding.second.view;
+        view->setIndentationConfiguration(
+            value.indentationStyle == QStringLiteral("tabs"),
+            static_cast<std::size_t>(value.indentationWidth));
         auto configuration = view->renderer()->configuration();
         configuration.font = font;
         configuration.lineHeight = lineHeight;
@@ -641,6 +676,8 @@ void MainWindow::refreshPresentation() {
     const bool hasPath = hasDocument && document->metadata().path.has_value();
     externalOpenAction_->setEnabled(hasPath);
     terminalAction_->setEnabled(hasPath);
+    for (const auto& [id, action] : commandActions_)
+        action->setEnabled(commandRegistry_.isEnabled(id));
     if (searchPanel_) searchPanel_->setActiveView(activeEditorView());
 
     if (!document) {
@@ -678,6 +715,10 @@ void MainWindow::syncEditorViews() {
         auto* view = new EditorView(document->buffer(),
                                     document->metadata().preferredLineEnding,
                                     editorStack_);
+        view->setShortcutHandler(
+            [this](QKeyEvent* event) { return shortcutDispatcher_.dispatch(event); });
+        connect(view, &EditorView::contextMenuRequested, this,
+                [this](const QPoint& position) { showContextMenuAt(position); });
         view->setDocumentChangedCallback([this, id] { refreshAfterEdit(id); });
         editorStack_->addWidget(view);
         editorViews_.emplace(id, EditorBinding{document->contentGeneration(), view});
@@ -1068,16 +1109,26 @@ void MainWindow::dropEvent(QDropEvent* event) {
 }
 
 void MainWindow::contextMenuEvent(QContextMenuEvent* event) {
+    showContextMenuAt(event->globalPos());
+}
+
+void MainWindow::showContextMenuAt(const QPoint& globalPosition) {
     QMenu menu(this);
+    bool hasEditCommands = false;
+    bool hasSearchCommands = false;
     for (const auto& command : commandRegistry_.commands()) {
         if (!commandRegistry_.isEnabled(command.id)) continue;
         if (command.category != "Edit" && command.category != "Search") continue;
-        menu.addAction(QString::fromStdString(command.text),
-                       [this, id = command.id] {
-                           (void)commandRegistry_.execute(id);
-                       });
+        if (command.category == "Search" && hasEditCommands && !hasSearchCommands)
+            menu.addSeparator();
+        const auto action = commandActions_.find(command.id);
+        if (action == commandActions_.end()) continue;
+        action->second->setEnabled(commandRegistry_.isEnabled(command.id));
+        menu.addAction(action->second);
+        hasEditCommands = hasEditCommands || command.category == "Edit";
+        hasSearchCommands = hasSearchCommands || command.category == "Search";
     }
-    menu.exec(event->globalPos());
+    if (!menu.isEmpty()) menu.exec(globalPosition);
 }
 
 void MainWindow::closeEvent(QCloseEvent* event) {
@@ -1097,6 +1148,15 @@ void MainWindow::closeEvent(QCloseEvent* event) {
     } else {
         event->ignore();
     }
+}
+
+void MainWindow::preserveSessionOnApplicationQuit() {
+    if (closingResolved_ || !sessionRecovery_) return;
+    const auto state = captureSessionState();
+    sessionRecovery_->flushNow();
+    sessionRecovery_->finishNormally(state, true);
+    workflow_.shutdown();
+    closingResolved_ = true;
 }
 
 } // namespace note::ui

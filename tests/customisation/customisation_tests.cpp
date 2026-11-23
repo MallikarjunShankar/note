@@ -2,6 +2,7 @@
 #include "customisation/theme_manager.hpp"
 
 #include <QCoreApplication>
+#include <QFile>
 #include <QTemporaryDir>
 
 #include <stdexcept>
@@ -20,11 +21,14 @@ int main(int argc, char* argv[]) {
     auto value = settings.settings();
     value.fontSize = 999;
     value.indentationWidth = 0;
+    value.themeName = "../outside";
     settings.setSettings(value);
     require(settings.settings().fontSize == 72,
             "font size is validated");
     require(settings.settings().indentationWidth == 1,
             "indent width is validated");
+    require(settings.settings().themeName == "Dark",
+            "unsafe theme names fall back to the default");
     require(settings.save(), "settings save succeeds");
     require(settings.load(), "settings load succeeds");
 
@@ -41,6 +45,30 @@ int main(int argc, char* argv[]) {
             "custom theme restores");
     const auto exportPath = temporary.filePath("export.json");
     require(themes.exportTheme(custom, exportPath), "theme export succeeds");
-    require(themes.importTheme(exportPath), "theme import succeeds");
+    QString importedName;
+    require(themes.importTheme(exportPath, &importedName) &&
+            importedName == custom.name, "theme import returns its saved name");
+
+    auto preview = dark;
+    preview.name = "Preview Only";
+    preview.background = QColor("#445566");
+    require(themes.setPreviewTheme(preview), "valid theme previews");
+    require(themes.loadTheme("Dark").background == preview.background,
+            "preview applies without changing the saved theme");
+    themes.clearPreviewTheme();
+    require(themes.loadTheme("Dark").background == dark.background,
+            "clearing a preview restores the saved theme");
+    auto invalid = dark;
+    invalid.name = "../settings";
+    require(!themes.validateTheme(invalid),
+            "theme names cannot escape the theme directory");
+
+    const auto invalidThemePath = temporary.filePath("invalid-theme.json");
+    QFile invalidTheme(invalidThemePath);
+    require(invalidTheme.open(QIODevice::WriteOnly), "invalid theme fixture opens");
+    invalidTheme.write("{\"name\":\"../settings\"}");
+    invalidTheme.close();
+    require(!themes.importTheme(invalidThemePath),
+            "theme import rejects names that could escape the theme directory");
     return 0;
 }

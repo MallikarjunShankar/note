@@ -3,6 +3,7 @@
 #include <QSettings>
 
 #include <algorithm>
+#include <set>
 
 namespace note::commands {
 
@@ -18,7 +19,9 @@ bool KeybindingManager::setBinding(const std::string& commandId,
                                    const QKeySequence& sequence,
                                    std::string* conflict) {
     if (sequence.isEmpty()) {
-        removeBinding(commandId);
+        if (!defaults_.contains(commandId)) return false;
+        overrides_[commandId] = QKeySequence{};
+        save();
         return true;
     }
     for (const auto& [id, existing] : bindings()) {
@@ -74,13 +77,33 @@ void KeybindingManager::save() {
 void KeybindingManager::load() {
     overrides_.clear();
     QSettings settings(storageFile_, QSettings::IniFormat);
+    if (settings.status() != QSettings::NoError) return;
     settings.beginGroup(QStringLiteral("keybindings"));
-    for (const auto& key : settings.allKeys()) {
-        const auto sequence = QKeySequence(settings.value(key).toString());
-        if (!sequence.isEmpty())
-            overrides_[key.toStdString()] = sequence;
+    auto keys = settings.allKeys();
+    std::sort(keys.begin(), keys.end());
+    for (const auto& key : keys) {
+        const auto id = key.toStdString();
+        if (defaults_.contains(id))
+            overrides_[id] = QKeySequence(settings.value(key).toString());
     }
     settings.endGroup();
+
+    std::set<std::string> conflictingOverrides;
+    const auto loaded = bindings();
+    for (std::size_t first = 0; first < loaded.size(); ++first) {
+        if (loaded[first].sequence.isEmpty()) continue;
+        for (std::size_t second = first + 1; second < loaded.size(); ++second) {
+            if (loaded[second].sequence.isEmpty() ||
+                loaded[first].sequence.matches(loaded[second].sequence) ==
+                    QKeySequence::NoMatch)
+                continue;
+            if (overrides_.contains(loaded[first].commandId))
+                conflictingOverrides.insert(loaded[first].commandId);
+            if (overrides_.contains(loaded[second].commandId))
+                conflictingOverrides.insert(loaded[second].commandId);
+        }
+    }
+    for (const auto& id : conflictingOverrides) overrides_.erase(id);
 }
 
 } // namespace note::commands

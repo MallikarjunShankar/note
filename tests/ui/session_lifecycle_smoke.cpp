@@ -168,6 +168,26 @@ int main(int argc, char* argv[]) {
         recoveryWindow.close();
         require(recoverySession.errorString().isEmpty(),
                 "recovered session shuts down normally");
+
+        const auto quitDataPath = temporary.filePath("quit-app-data");
+        note::application::SessionRecoveryService quitSession(quitDataPath);
+        const auto quitStartup = quitSession.start();
+        note::application::DocumentWorkflow quitWorkflow;
+        auto& quitDocument = quitWorkflow.createNew();
+        note::ui::MainWindow quitWindow(quitWorkflow, &quitSession, quitStartup);
+        quitWindow.show();
+        quitDocument.buffer().insert(0, "saved before QApplication::quit");
+        quitWindow.refreshFromModel();
+        quitWindow.preserveSessionOnApplicationQuit();
+        note::application::SessionRecoveryService quitVerification(quitDataPath);
+        const auto quitState = quitVerification.start();
+        const auto quitSnapshots = quitVerification.recoveries();
+        require(!quitState.previousRunClean && quitSnapshots.size() == 1 &&
+                    quitSnapshots.front().contents &&
+                    quitSnapshots.front().contents->utf8 ==
+                        "saved before QApplication::quit",
+                "application quit outside window close preserves a recoverable session");
+        quitVerification.finishNormally(quitState);
     } catch (const std::exception& error) {
         qCritical("Session lifecycle smoke failure: %s", error.what());
         return 1;

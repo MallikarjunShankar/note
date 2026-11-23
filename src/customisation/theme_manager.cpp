@@ -4,6 +4,7 @@
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QJsonParseError>
 #include <QJsonObject>
 #include <QSaveFile>
 #include <algorithm>
@@ -11,10 +12,23 @@
 namespace note::customisation {
 namespace {
 QString colourName(const QColor& colour) { return colour.name(QColor::HexRgb); }
+bool validThemeName(const QString& name) {
+    if (name.isEmpty() || name.size() > 64 || name.trimmed() != name ||
+        name == "." || name == "..")
+        return false;
+    for (const auto character : name) {
+        if (character.isNull() || character.category() == QChar::Other_Control ||
+            QStringLiteral("<>:\"/\\|?*").contains(character))
+            return false;
+    }
+    return true;
+}
+
 bool readTheme(const QJsonObject& object, const NoteTheme& fallback, NoteTheme& theme) {
+    const auto name = object.value("name").toString();
+    if (name.isEmpty()) return false;
     theme = fallback;
-    theme.name = object.value("name").toString(theme.name);
-    if (theme.name.isEmpty()) return false;
+    theme.name = name;
     auto readColour = [&](const char* key, QColor& target) {
         const auto text = object.value(key).toString();
         QColor candidate(text);
@@ -110,19 +124,35 @@ std::vector<QString> ThemeManager::customThemeNames() const {
 }
 
 NoteTheme ThemeManager::loadTheme(const QString& name) const {
+    if (previewTheme_) return *previewTheme_;
     for (const auto& theme : builtInThemes())
         if (theme.name == name) return theme;
+    if (!validThemeName(name)) return darkTheme_;
     QFile input(QDir(themeDirectory_).filePath(name + ".json"));
     if (!input.open(QIODevice::ReadOnly)) return darkTheme_;
     NoteTheme theme;
-    if (!readTheme(QJsonDocument::fromJson(input.readAll()).object(), darkTheme_, theme))
+    QJsonParseError error;
+    const auto document = QJsonDocument::fromJson(input.readAll(), &error);
+    if (error.error != QJsonParseError::NoError || !document.isObject() ||
+        !readTheme(document.object(), darkTheme_, theme))
         return darkTheme_;
     return theme;
 }
 
 bool ThemeManager::validateTheme(const NoteTheme& theme) const {
-    return !theme.name.isEmpty() && theme.background.isValid() &&
+    return validThemeName(theme.name) && theme.background.isValid() &&
            theme.foreground.isValid();
+}
+
+bool ThemeManager::setPreviewTheme(NoteTheme theme) {
+    if (!validateTheme(theme)) return false;
+    previewTheme_ = std::move(theme);
+    emit themeChanged(*previewTheme_);
+    return true;
+}
+
+void ThemeManager::clearPreviewTheme() noexcept {
+    previewTheme_.reset();
 }
 
 bool ThemeManager::saveTheme(const NoteTheme& theme) {
@@ -153,24 +183,35 @@ bool ThemeManager::saveTheme(const NoteTheme& theme) {
     object["syntax"] = syntax;
     QSaveFile file(QDir(themeDirectory_).filePath(theme.name + ".json"));
     if (!file.open(QIODevice::WriteOnly)) return false;
-    file.write(QJsonDocument(object).toJson(QJsonDocument::Indented));
-    if (!file.commit()) return false;
+    const auto payload = QJsonDocument(object).toJson(QJsonDocument::Indented);
+    if (file.write(payload) != payload.size() || !file.commit()) {
+        file.cancelWriting();
+        return false;
+    }
     emit themeChanged(theme);
     return true;
 }
 
-bool ThemeManager::importTheme(const QString& sourcePath) {
+bool ThemeManager::importTheme(const QString& sourcePath, QString* importedName) {
     QFile input(sourcePath);
     if (!input.open(QIODevice::ReadOnly)) return false;
-    NoteTheme theme;
-    if (!readTheme(QJsonDocument::fromJson(input.readAll()).object(), darkTheme_, theme))
+    QJsonParseError error;
+    const auto document = QJsonDocument::fromJson(input.readAll(), &error);
+    if (error.error != QJsonParseError::NoError || !document.isObject() ||
+        document.object().value("name").toString().isEmpty())
         return false;
-    return saveTheme(theme);
+    NoteTheme theme;
+    if (!readTheme(document.object(), darkTheme_, theme) || !validateTheme(theme))
+        return false;
+    if (!saveTheme(theme)) return false;
+    if (importedName) *importedName = theme.name;
+    return true;
 }
 
 bool ThemeManager::exportTheme(const NoteTheme& theme, const QString& destinationPath) const {
     if (!validateTheme(theme)) return false;
-    QFile file(destinationPath);
+    QSaveFile file(destinationPath);
+    file.setDirectWriteFallback(false);
     if (!file.open(QIODevice::WriteOnly)) return false;
     QJsonObject object;
     object["name"] = theme.name;
@@ -184,7 +225,8 @@ bool ThemeManager::exportTheme(const NoteTheme& theme, const QString& destinatio
     for (const auto& [category, colour] : theme.syntaxColours)
         syntax[QString::fromStdString(category)] = colour.name(QColor::HexRgb);
     object["syntax"] = syntax;
-    return file.write(QJsonDocument(object).toJson(QJsonDocument::Indented)) >= 0;
+    const auto payload = QJsonDocument(object).toJson(QJsonDocument::Indented);
+    return file.write(payload) == payload.size() && file.commit();
 }
 
 } // namespace note::customisation

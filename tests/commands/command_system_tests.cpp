@@ -2,6 +2,7 @@
 #include "commands/keybinding_manager.hpp"
 
 #include <QCoreApplication>
+#include <QSettings>
 #include <QTemporaryDir>
 
 #include <stdexcept>
@@ -30,14 +31,43 @@ int main(int argc, char* argv[]) {
     note::commands::KeybindingManager keys(
         temporary.filePath("keybindings.ini"));
     keys.setDefault("edit.test", QKeySequence(Qt::CTRL | Qt::Key_K));
+    keys.setDefault("file.terminal", {});
     std::string conflict;
     require(keys.setBinding("edit.test",
                             QKeySequence(Qt::CTRL | Qt::Key_K), &conflict),
             "keybinding accepts a binding");
     require(keys.binding("edit.test") == QKeySequence(Qt::CTRL | Qt::Key_K),
             "keybinding resolves");
+    require(keys.bindings().size() == 2 &&
+                keys.setBinding("file.terminal",
+                                QKeySequence(Qt::CTRL | Qt::Key_T), &conflict) &&
+                keys.binding("file.terminal") ==
+                    QKeySequence(Qt::CTRL | Qt::Key_T),
+            "commands without defaults remain user-configurable");
+    require(keys.setBinding("file.terminal", QKeySequence{}, &conflict) &&
+                keys.binding("file.terminal").isEmpty(),
+            "an explicit empty binding disables a shortcut");
+
+    QSettings invalidOverrides(temporary.filePath("keybindings.ini"),
+                               QSettings::IniFormat);
+    invalidOverrides.setValue("keybindings/edit.test",
+                              QKeySequence(Qt::CTRL | Qt::Key_T).toString());
+    invalidOverrides.setValue("keybindings/file.terminal",
+                              QKeySequence(Qt::CTRL | Qt::Key_T).toString());
+    invalidOverrides.sync();
+    note::commands::KeybindingManager restored(
+        temporary.filePath("keybindings.ini"));
+    restored.setDefault("edit.test", QKeySequence(Qt::CTRL | Qt::Key_K));
+    restored.setDefault("file.terminal", {});
+    restored.load();
+    require(restored.binding("edit.test") ==
+                QKeySequence(Qt::CTRL | Qt::Key_K) &&
+                restored.binding("file.terminal").isEmpty(),
+            "conflicting persisted overrides safely fall back to defaults");
+
     keys.restoreDefaults();
-    require(keys.bindings().size() == 1,
+    require(keys.bindings().size() == 2 &&
+                keys.binding("file.terminal").isEmpty(),
             "restore defaults retains command bindings");
     return 0;
 }

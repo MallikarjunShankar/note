@@ -29,20 +29,25 @@ QString shellQuote(const QString& value) {
 
 LaunchResult openInExternalApplication(const std::filesystem::path& file) {
     if (file.empty()) return {false, "No file path is available."};
-    if (!QDesktopServices::openUrl(QUrl::fromLocalFile(pathToQString(file))))
+    const QFileInfo info(pathToQString(file));
+    if (!info.exists() || !info.isFile() || !info.isReadable())
+        return {false, "The file is missing or inaccessible."};
+    if (!QDesktopServices::openUrl(QUrl::fromLocalFile(info.absoluteFilePath())))
         return {false, "The operating system could not open this file in its associated application."};
     return {true, {}};
 }
 
 LaunchResult openTerminalInDirectory(const std::filesystem::path& directory) {
     if (directory.empty()) return {false, "No directory is available for this document."};
-    const auto qdirectory = QFileInfo(pathToQString(directory)).absoluteFilePath();
+    const QFileInfo directoryInfo(pathToQString(directory));
+    if (!directoryInfo.exists() || !directoryInfo.isDir())
+        return {false, "The directory is missing or inaccessible."};
+    const auto qdirectory = directoryInfo.absoluteFilePath();
 #if defined(Q_OS_WIN)
     if (QProcess::startDetached(QStringLiteral("wt.exe"), {QStringLiteral("-d"), qdirectory}, qdirectory))
         return {true, {}};
-    if (QProcess::startDetached(QStringLiteral("cmd.exe"),
-        {QStringLiteral("/c"), QStringLiteral("start"), QString{}, QStringLiteral("/D"), qdirectory,
-         QStringLiteral("cmd.exe")}, qdirectory)) return {true, {}};
+    if (QProcess::startDetached(QStringLiteral("cmd.exe"), {QStringLiteral("/K")}, qdirectory))
+        return {true, {}};
     return {false, "Could not start Windows Terminal or Command Prompt."};
 #elif defined(Q_OS_MACOS)
     if (QProcess::startDetached(QStringLiteral("open"),

@@ -186,6 +186,11 @@ void DocumentWorkflow::setExternalFileChangeCallback(ExternalFileChangeCallback 
     externalFileChangeCallback_ = std::move(callback);
 }
 
+void DocumentWorkflow::setExternalFileInspectionErrorCallback(
+    ExternalFileInspectionErrorCallback callback) {
+    externalFileInspectionErrorCallback_ = std::move(callback);
+}
+
 void DocumentWorkflow::checkExternalChanges() {
     fileMonitor_.refresh();
     for (const auto id : tabs_.order()) scheduleExternalInspection(id);
@@ -221,6 +226,8 @@ void DocumentWorkflow::scheduleExternalInspection(documents::DocumentId id) {
                     else if (result.metadata.sha256 == expected)
                         state = documents::ExternalFileState::current;
                     guard->updateExternalFileState(id, state);
+                } else if (guard->externalFileInspectionErrorCallback_) {
+                    guard->externalFileInspectionErrorCallback_(id, result.error);
                 }
             }
             const auto retry = guard->changedDuringInspection_.erase(id) != 0;

@@ -42,6 +42,8 @@ public:
     using OpenCompleteCallback = std::function<void(OpenRequestId, WorkflowResult)>;
     using ExternalFileChangeCallback = std::function<void(documents::DocumentId,
                                                            documents::ExternalFileState)>;
+    using ExternalFileInspectionErrorCallback =
+        std::function<void(documents::DocumentId, const std::string&)>;
     DocumentWorkflow();
     ~DocumentWorkflow() override;
     [[nodiscard]] documents::Document& createNew();
@@ -55,6 +57,8 @@ public:
     void cancelOpen(OpenRequestId id) noexcept;
     void shutdown() noexcept;
     void setExternalFileChangeCallback(ExternalFileChangeCallback callback);
+    void setExternalFileInspectionErrorCallback(
+        ExternalFileInspectionErrorCallback callback);
     void checkExternalChanges();
     [[nodiscard]] WorkflowResult activate(documents::DocumentId id) noexcept;
     [[nodiscard]] WorkflowResult save(documents::DocumentId id);
@@ -99,6 +103,7 @@ private:
     documents::FileService files_;
     platform::FileMonitor fileMonitor_;
     ExternalFileChangeCallback externalFileChangeCallback_;
+    ExternalFileInspectionErrorCallback externalFileInspectionErrorCallback_;
     std::set<documents::DocumentId> inspectingFiles_;
     std::set<documents::DocumentId> changedDuringInspection_;
     OpenRequestId nextOpenRequestId_{1};

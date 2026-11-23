@@ -2,6 +2,7 @@
 
 #include <QApplication>
 #include <QClipboard>
+#include <QContextMenuEvent>
 #include <QKeyEvent>
 #include <QKeySequence>
 #include <QMouseEvent>
@@ -117,10 +118,24 @@ void EditorView::restoreCursorPosition(std::size_t offset) {
     renderer_->viewport()->update();
 }
 
+void EditorView::setIndentationConfiguration(bool useTabs, std::size_t width) {
+    indentationUsesTabs_ = useTabs;
+    indentationWidth_ = std::clamp<std::size_t>(width, 1, 16);
+}
+
+void EditorView::setShortcutHandler(std::function<bool(QKeyEvent*)> handler) {
+    shortcutHandler_ = std::move(handler);
+}
+
 bool EditorView::eventFilter(QObject* watched, QEvent* event) {
     if (event->type() == QEvent::KeyPress)
         return handleKeyPress(static_cast<QKeyEvent*>(event));
     if (watched == renderer_->viewport()) {
+        if (event->type() == QEvent::ContextMenu) {
+            const auto* context = static_cast<QContextMenuEvent*>(event);
+            emit contextMenuRequested(context->globalPos());
+            return true;
+        }
         switch (event->type()) {
         case QEvent::MouseButtonPress:
             return handleMousePress(static_cast<QMouseEvent*>(event));
@@ -148,6 +163,7 @@ bool EditorView::eventFilter(QObject* watched, QEvent* event) {
 }
 
 bool EditorView::handleKeyPress(QKeyEvent* event) {
+    if (shortcutHandler_ && shortcutHandler_(event)) return true;
     if (event->matches(QKeySequence::Copy)) {
         copySelection(false);
         return true;
@@ -160,11 +176,11 @@ bool EditorView::handleKeyPress(QKeyEvent* event) {
         pasteClipboard();
         return true;
     }
-    if (event->matches(QKeySequence::Undo)) {
+    if (!shortcutHandler_ && event->matches(QKeySequence::Undo)) {
         if (history_.undo()) afterEdit();
         return true;
     }
-    if (event->matches(QKeySequence::Redo)) {
+    if (!shortcutHandler_ && event->matches(QKeySequence::Redo)) {
         if (history_.redo()) afterEdit();
         return true;
     }
@@ -206,8 +222,10 @@ bool EditorView::handleKeyPress(QKeyEvent* event) {
         afterEdit();
         return true;
     case Qt::Key_Tab:
-        if (hasAnySelection()) (void)history_.replaceSelections("    ");
-        else (void)history_.insertText("    ");
+        if (shift)
+            (void)history_.outdentLines(indentationWidth_);
+        else
+            (void)history_.indentLines(indentationUsesTabs_, indentationWidth_);
         afterEdit();
         return true;
     default:
@@ -552,12 +570,27 @@ void EditorView::insertNewlineWithIndent() {
     }
     auto indentation = buffer_.textRange(lineRange.begin, indentEnd - lineRange.begin);
     if (cursor > lineRange.begin && buffer_.byteAt(cursor - 1) == '{')
-        indentation.append(4, ' ');
+        indentation.append(indentationUsesTabs_ ? "\t"
+            : std::string(indentationWidth_, ' '));
     const auto indent = indentation.size();
     const auto afterCursor = cursor < buffer_.sizeBytes()
                                  ? buffer_.byteAt(cursor)
                                  : static_cast<unsigned char>(0);
-    if (afterCursor == '}' && indent >= 4) indentation.resize(indent - 4);
+    if (afterCursor == '}' && indent != 0) {
+        if (indentationUsesTabs_ && indentation.back() == '\t') {
+            indentation.pop_back();
+        } else {
+            std::size_t remove = 0;
+            while (remove < indentationWidth_ && !indentation.empty() &&
+                   indentation.back() == ' ') {
+                indentation.pop_back();
+                ++remove;
+            }
+            if (remove == 0 && !indentation.empty() &&
+                indentation.back() == '\t')
+                indentation.pop_back();
+        }
+    }
     std::string insertion{"\n"};
     insertion.append(indentation);
     if (hasAnySelection())

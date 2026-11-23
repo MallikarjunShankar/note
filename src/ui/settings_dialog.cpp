@@ -10,6 +10,8 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QMessageBox>
+#include <QSignalBlocker>
 #include <QSpinBox>
 #include <QTabWidget>
 #include <QVBoxLayout>
@@ -39,6 +41,9 @@ SettingsDialog::SettingsDialog(customisation::SettingsManager& settings,
     layout->addWidget(search);
     auto* tabs = new QTabWidget(this);
     layout->addWidget(tabs);
+    auto* feedback = new QLabel(this);
+    feedback->setObjectName(QStringLiteral("settingsFeedback"));
+    layout->addWidget(feedback);
 
     auto* appearance = new QWidget(tabs);
     auto* appearanceLayout = new QFormLayout(appearance);
@@ -127,6 +132,7 @@ SettingsDialog::SettingsDialog(customisation::SettingsManager& settings,
     auto* foregroundColour = new QLineEdit(themePage);
     auto* backgroundColour = new QLineEdit(themePage);
     auto* selectionColour = new QLineEdit(themePage);
+    backgroundColour->setObjectName(QStringLiteral("themeBackgroundColour"));
     const auto activeTheme = themes_.loadTheme(settings_.settings().themeName);
     windowColour->setText(activeTheme.window.name());
     foregroundColour->setText(activeTheme.foreground.name());
@@ -136,26 +142,42 @@ SettingsDialog::SettingsDialog(customisation::SettingsManager& settings,
     themeForm->addRow(tr("Foreground"), foregroundColour);
     themeForm->addRow(tr("Background"), backgroundColour);
     themeForm->addRow(tr("Selection"), selectionColour);
-    const auto preview = [this, themeName, windowColour, foregroundColour,
+    const auto preview = [this, theme, themeName, windowColour, foregroundColour,
                           backgroundColour, selectionColour] {
-        auto theme = themes_.loadTheme(settings_.settings().themeName);
-        theme.name = themeName->text().isEmpty() ? theme.name : themeName->text();
+        auto value = themes_.loadTheme(theme->currentText());
+        value.name = themeName->text().isEmpty() ? value.name : themeName->text();
         if (QColor(windowColour->text()).isValid())
-            theme.window = QColor(windowColour->text());
+            value.window = QColor(windowColour->text());
         if (QColor(foregroundColour->text()).isValid())
-            theme.foreground = QColor(foregroundColour->text());
+            value.foreground = QColor(foregroundColour->text());
         if (QColor(backgroundColour->text()).isValid())
-            theme.background = QColor(backgroundColour->text());
+            value.background = QColor(backgroundColour->text());
         if (QColor(selectionColour->text()).isValid())
-            theme.selection = QColor(selectionColour->text());
-        if (themes_.validateTheme(theme))
-            themes_.saveTheme(theme);
+            value.selection = QColor(selectionColour->text());
+        (void)themes_.setPreviewTheme(std::move(value));
     };
     connect(themeName, &QLineEdit::textChanged, this, preview);
     connect(windowColour, &QLineEdit::textChanged, this, preview);
     connect(foregroundColour, &QLineEdit::textChanged, this, preview);
     connect(backgroundColour, &QLineEdit::textChanged, this, preview);
     connect(selectionColour, &QLineEdit::textChanged, this, preview);
+    connect(theme, &QComboBox::currentTextChanged, this,
+            [this, themeName, windowColour, foregroundColour,
+             backgroundColour, selectionColour, preview](const QString& name) {
+        themes_.clearPreviewTheme();
+        const auto selected = themes_.loadTheme(name);
+        const QSignalBlocker blockName(themeName);
+        const QSignalBlocker blockWindow(windowColour);
+        const QSignalBlocker blockForeground(foregroundColour);
+        const QSignalBlocker blockBackground(backgroundColour);
+        const QSignalBlocker blockSelection(selectionColour);
+        themeName->setText(selected.name);
+        windowColour->setText(selected.window.name());
+        foregroundColour->setText(selected.foreground.name());
+        backgroundColour->setText(selected.background.name());
+        selectionColour->setText(selected.selection.name());
+        preview();
+    });
     auto* importTheme = new QPushButton(tr("Import Theme"), themePage);
     auto* exportTheme = new QPushButton(tr("Export Theme"), themePage);
     themeForm->addRow(importTheme);
@@ -209,23 +231,33 @@ SettingsDialog::SettingsDialog(customisation::SettingsManager& settings,
     }
     tabs->addTab(keyPage, tr("Keybindings"));
 
-    connect(importTheme, &QPushButton::clicked, this, [this] {
+    connect(importTheme, &QPushButton::clicked, this, [this, theme, feedback] {
         const auto path = QFileDialog::getOpenFileName(this, tr("Import Theme"), {},
                                                         tr("Note Themes (*.json)"));
-        if (!path.isEmpty()) themes_.importTheme(path);
+        if (path.isEmpty()) return;
+        QString imported;
+        if (!themes_.importTheme(path, &imported)) {
+            feedback->setText(tr("The theme could not be imported."));
+            return;
+        }
+        feedback->setText(tr("Theme imported."));
+        if (theme->findText(imported) < 0) theme->addItem(imported);
+        theme->setCurrentText(imported);
     });
-    connect(exportTheme, &QPushButton::clicked, this, [this, themeName,
+    connect(exportTheme, &QPushButton::clicked, this, [this, theme, themeName, feedback,
             windowColour, foregroundColour, backgroundColour, selectionColour] {
         const auto path = QFileDialog::getSaveFileName(this, tr("Export Theme"), {},
                                                         tr("Note Themes (*.json)"));
         if (path.isEmpty()) return;
-        auto exported = themes_.loadTheme(settings_.settings().themeName);
+        auto exported = themes_.loadTheme(theme->currentText());
         exported.name = themeName->text();
         exported.window = QColor(windowColour->text());
         exported.foreground = QColor(foregroundColour->text());
         exported.background = QColor(backgroundColour->text());
         exported.selection = QColor(selectionColour->text());
-        themes_.exportTheme(exported, path);
+        feedback->setText(themes_.exportTheme(exported, path)
+            ? tr("Theme exported.")
+            : tr("The theme could not be exported."));
     });
 
     auto* buttons = new QDialogButtonBox(
@@ -238,9 +270,8 @@ SettingsDialog::SettingsDialog(customisation::SettingsManager& settings,
                                 indentWidth, pairing, whitespace, guides,
                                 currentLine, occurrences, lineNumbers, relative,
                                 wrap, themeName, windowColour, foregroundColour,
-                                backgroundColour, selectionColour] {
+                                backgroundColour, selectionColour, feedback] {
         auto value = settings_.settings();
-        value.themeName = theme->currentText();
         value.fontFamily = font->currentFont().family();
         value.fontSize = fontSize->value();
         value.lineSpacing = lineSpacing->value();
@@ -258,7 +289,6 @@ SettingsDialog::SettingsDialog(customisation::SettingsManager& settings,
         value.lineNumbers = lineNumbers->isChecked();
         value.relativeLineNumbers = relative->isChecked();
         value.wordWrap = wrap->isChecked();
-        settings_.setSettings(value);
         auto custom = themes_.loadTheme(theme->currentText());
         custom.name = themeName->text().isEmpty() ? custom.name : themeName->text();
         if (QColor(windowColour->text()).isValid())
@@ -269,9 +299,29 @@ SettingsDialog::SettingsDialog(customisation::SettingsManager& settings,
             custom.background = QColor(backgroundColour->text());
         if (QColor(selectionColour->text()).isValid())
             custom.selection = QColor(selectionColour->text());
-        if (custom.name != "Dark" && custom.name != "Light")
-            themes_.saveTheme(custom);
-        settings_.save();
+        bool themeSaved = true;
+        if (custom.name != "Dark" && custom.name != "Light") {
+            themeSaved = themes_.saveTheme(custom);
+            if (themeSaved) {
+                value.themeName = custom.name;
+                if (theme->findText(custom.name) < 0)
+                    theme->addItem(custom.name);
+                const QSignalBlocker blockTheme(theme);
+                theme->setCurrentText(custom.name);
+            } else {
+                value.themeName = theme->currentText();
+            }
+        } else {
+            value.themeName = theme->currentText();
+        }
+        settings_.setSettings(value);
+        const bool settingsSaved = settings_.save();
+        feedback->setText(!themeSaved
+            ? tr("Settings were applied, but the theme could not be saved.")
+            : (!settingsSaved
+                ? tr("Settings were applied, but could not be saved.")
+                : QString{}));
+        themes_.clearPreviewTheme();
         if (applyCallback_) applyCallback_();
     };
 
@@ -281,7 +331,10 @@ SettingsDialog::SettingsDialog(customisation::SettingsManager& settings,
         applySettings();
         accept();
     });
-    connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
+    connect(this, &QDialog::rejected, this, [this] {
+        themes_.clearPreviewTheme();
+        if (applyCallback_) applyCallback_();
+    });
 
     connect(search, &QLineEdit::textChanged, this, [tabs](const QString& query) {
         const auto needle = query.trimmed();

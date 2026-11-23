@@ -6,6 +6,8 @@
 #include <QAbstractButton>
 #include <QApplication>
 #include <QClipboard>
+#include <QContextMenuEvent>
+#include <QDialog>
 #include <QEventLoop>
 #include <QFile>
 #include <QFontMetricsF>
@@ -13,6 +15,8 @@
 #include <QMetaObject>
 #include <QMessageBox>
 #include <QMouseEvent>
+#include <QMenu>
+#include <QLineEdit>
 #include <QProgressDialog>
 #include <QPushButton>
 #include <QTemporaryDir>
@@ -88,6 +92,48 @@ int main(int argc, char* argv[]) {
         sendKey(*editor, Qt::Key_unknown, Qt::NoModifier, QString::fromUtf8("λ"));
         require(active->buffer().text() == "Aλ" && editor->cursors().primaryOffset() == 3,
                 "keyboard inserts ASCII and Unicode through editing engine");
+        editor->setIndentationConfiguration(false, 2);
+        editor->selectRange(0, active->buffer().sizeBytes());
+        sendKey(*editor, Qt::Key_Tab);
+        require(active->buffer().text() == "  Aλ",
+                "Tab indents selected lines using the configured space width");
+        sendKey(*editor, Qt::Key_Tab, Qt::ShiftModifier);
+        require(active->buffer().text() == "Aλ",
+                "Shift+Tab outdents selected lines by one configured level");
+        editor->selections().clearSelections();
+        editor->cursors().setPrimaryCursor(active->buffer().sizeBytes());
+        editor->refreshFromModel();
+        editor->setIndentationConfiguration(true, 8);
+        editor->cursors().setPrimaryCursor(0);
+        sendKey(*editor, Qt::Key_Tab);
+        require(active->buffer().text() == "\tAλ",
+                "Tab inserts a tab when tab indentation is configured");
+        sendKey(*editor, Qt::Key_Tab, Qt::ShiftModifier);
+        require(active->buffer().text() == "Aλ",
+                "Shift+Tab removes a leading configured tab");
+        editor->setIndentationConfiguration(false, 4);
+        editor->cursors().setPrimaryCursor(active->buffer().sizeBytes());
+        editor->refreshFromModel();
+        bool editorContextMenuShown = false;
+        QTimer::singleShot(0, [&] {
+            auto* contextMenu = qobject_cast<QMenu*>(
+                QApplication::activePopupWidget());
+            editorContextMenuShown = contextMenu &&
+                contextMenu->actions().contains(
+                    window.findChild<QAction*>(
+                        QStringLiteral("edit_undoAction"))) &&
+                contextMenu->actions().contains(
+                    window.findChild<QAction*>(
+                        QStringLiteral("search_findAction")));
+            if (contextMenu) contextMenu->close();
+        });
+        const auto globalContextPosition =
+            editor->renderer()->viewport()->mapToGlobal(QPoint(12, 12));
+        QContextMenuEvent contextEvent(QContextMenuEvent::Mouse, QPoint(12, 12),
+                                       globalContextPosition);
+        QApplication::sendEvent(editor->renderer()->viewport(), &contextEvent);
+        require(editorContextMenuShown,
+                "editor context menu exposes shared edit and search actions");
         sendKey(*editor, Qt::Key_Left);
         sendKey(*editor, Qt::Key_Backspace);
         require(active->buffer().text() == "λ", "cursor movement and backspace");
@@ -513,6 +559,32 @@ int main(int argc, char* argv[]) {
         largeEditor->renderer()->scrollToLine(5000);
         require(largeEditor->renderer()->firstVisibleLine() == 5000,
                 "large document remains vertically navigable");
+        auto* settingsAction = window.findChild<QAction*>(
+            QStringLiteral("settings_openAction"));
+        require(settingsAction != nullptr, "settings command is available");
+        const auto originalBackground =
+            largeEditor->renderer()->configuration().background;
+        bool previewApplied = false;
+        QTimer::singleShot(0, [&] {
+            auto* dialog = qobject_cast<QDialog*>(
+                QApplication::activeModalWidget());
+            auto* background = dialog
+                ? dialog->findChild<QLineEdit*>(
+                      QStringLiteral("themeBackgroundColour"))
+                : nullptr;
+            if (background) {
+                background->setText(QStringLiteral("#010203"));
+                previewApplied = largeEditor->renderer()->configuration().background ==
+                                 QColor(QStringLiteral("#010203"));
+            }
+            if (dialog) dialog->reject();
+        });
+        settingsAction->trigger();
+        require(previewApplied,
+                "theme preview applies immediately");
+        require(largeEditor->renderer()->configuration().background ==
+                    originalBackground,
+                "Cancel restores the saved theme");
         QTimer::singleShot(0, [] {
             auto* prompt = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
             if (prompt && prompt->button(QMessageBox::Cancel)) prompt->button(QMessageBox::Cancel)->click();

@@ -12,10 +12,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <string>
 #include <utility>
 #include <vector>
 
 class QEvent;
+class QKeyEvent;
 class QMouseEvent;
 
 namespace note::ui {
@@ -44,6 +46,11 @@ public:
     void setSearchMatches(const std::vector<std::pair<std::size_t, std::size_t>>& matches);
     void setBracketConfiguration(editor::BracketConfiguration configuration);
     void restoreCursorPosition(std::size_t offset);
+    void setIndentationConfiguration(bool useTabs, std::size_t width);
+    void setShortcutHandler(std::function<bool(QKeyEvent*)> handler);
+
+signals:
+    void contextMenuRequested(const QPoint& globalPosition);
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
@@ -83,6 +90,9 @@ private:
     editor::LineEnding preferredLineEnding_;
     EditorRenderer* renderer_{};
     std::function<void()> documentChangedCallback_;
+    std::function<bool(QKeyEvent*)> shortcutHandler_;
+    bool indentationUsesTabs_{};
+    std::size_t indentationWidth_{4};
     std::size_t dragAnchor_{};
     bool dragging_{};
     bool extendingSelection_{};
