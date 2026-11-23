@@ -45,6 +45,23 @@ These are the small Phase 02 interfaces available under `src/`. Qt is confined t
 - History memory is accounted as edit-record metadata, UTF-8 payloads, line-ending metadata, and captured cursor/selection state. `setMemoryLimit` evicts oldest complete transactions; an individual transaction larger than the limit is safely omitted.
 - Edit records retain `TextSnapshot` payloads so undo/redo restores exact UTF-8 text and LF/CRLF/CR metadata. No full-document snapshots are used.
 
+## Commands and keybindings
+
+- `commands::CommandRegistry` owns stable command identifiers, metadata, callbacks and enabled-state checks. `CommandExecutor` delegates to the same registry.
+- `commands::KeybindingManager` stores default and user shortcut mappings and persisted INI overrides. `ShortcutDispatcher` resolves key events through the same manager and executes registered commands.
+- Existing Qt `QAction` instances remain interaction adapters. Menus, toolbar items, context menus and the command palette route through the registry; they do not maintain separate command implementations.
+
+## Customisation
+
+- `customisation::SettingsManager` owns validated application preferences and persists them safely through Qt INI storage.
+- `customisation::ThemeManager` provides built-in themes, validates and loads JSON custom themes, and supports import/export. Theme data may reserve future syntax-category colours but no highlighting runtime is implemented.
+- The settings UI applies typography, layout and editing preferences to existing editor views. Theme application changes renderer/UI colours without recreating document buffers.
+
+## Search
+
+- `search::SearchEngine` searches the active `TextBuffer` in bounded UTF-8 chunks. It supports literal and Qt regular-expression modes, case sensitivity and whole-word matching, with invalid-pattern and bounded-abort reporting.
+- Match offsets are UTF-8 byte coordinates. `ui::SearchPanel` navigates matches, sends selected ranges to `EditorView`, highlights ranges in `EditorRenderer`, and performs individual or all replacements through the existing undo/redo transaction.
+
 ## Editor Renderer (`ui::EditorRenderer`)
 
 - `EditorRenderer` is a Qt Widgets `QAbstractScrollArea` that accepts non-owning references to a `TextBuffer`, `CursorManager`, and `SelectionManager`. It owns viewport presentation state only and performs no editing or file I/O.
