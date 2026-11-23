@@ -99,13 +99,25 @@ function Add-LicenseNotices([string]$Stage, [string]$Root, [string]$Version) {
     $pacman = Join-Path $Root 'usr\bin\pacman.exe'
     $bin = Join-Path $Root 'ucrt64\bin'
     $plugins = @(Get-NativeOutput (Join-Path $bin 'qtpaths6.exe') @('--query', 'QT_INSTALL_PLUGINS'))[0]
+    # DLLs at the top come from ucrt64\bin; those in subfolders are Qt plugins.
+    # Relative paths come from enumeration so 8.3 short names in $Stage do not matter.
+    $bundled = @()
+    foreach ($dll in @(Get-ChildItem $Stage -Filter *.dll -File)) {
+        $bundled += New-Object PSObject -Property @{ Relative = $dll.Name; Source = Join-Path $bin $dll.Name }
+    }
+    foreach ($folder in @(Get-ChildItem $Stage -Directory)) {
+        foreach ($dll in @(Get-ChildItem $folder.FullName -Recurse -Filter *.dll -File)) {
+            $relative = $dll.FullName.Substring($folder.Parent.FullName.Length + 1)
+            $bundled += New-Object PSObject -Property @{ Relative = $relative; Source = Join-Path $plugins $relative }
+        }
+    }
     $owners = [ordered]@{}
-    foreach ($dll in @(Get-ChildItem $Stage -Recurse -Filter *.dll | Sort-Object FullName)) {
-        $relative = $dll.FullName.Substring($Stage.Length + 1)
-        if ($dll.DirectoryName -eq $Stage) { $source = Join-Path $bin $dll.Name }
-        else { $source = Join-Path $plugins $relative }
+    foreach ($item in @($bundled | Sort-Object Relative)) {
+        $relative = $item.Relative
+        $source = $item.Source
         if (-not (Test-Path $source)) { throw "Cannot find the toolchain source of $relative ($source)." }
-        $package = @(Get-NativeOutput $pacman @('-Qqo', $source))[0]
+        # pacman does not understand backslashes in Windows paths.
+        $package = @(Get-NativeOutput $pacman @('-Qqo', ($source -replace '\\', '/')))[0]
         if (-not $owners.Contains($package)) { $owners[$package] = @() }
         $owners[$package] += $relative
     }
@@ -114,12 +126,18 @@ function Add-LicenseNotices([string]$Stage, [string]$Root, [string]$Version) {
     foreach ($package in $owners.Keys) {
         $short = $package -replace '^mingw-w64-ucrt-x86_64-', ''
         $packageVersion = (@(Get-NativeOutput $pacman @('-Q', $package))[0] -split ' ')[1]
-        $files = @(Get-NativeOutput $pacman @('-Qql', $package) |
-            Where-Object { $_ -match '/share/licenses/.*[^/]$' })
+        $packageFiles = @(Get-NativeOutput $pacman @('-Qql', $package))
+        # Usually share/licenses/<package>/...; some packages (ICU) keep a LICENSE elsewhere.
+        $files = @($packageFiles | Where-Object { $_ -match '/share/licenses/.*[^/]$' })
+        if ($files.Count -eq 0) {
+            $files = @($packageFiles | Where-Object { $_ -match '/(LICEN[CS]E|COPYING)[^/]*$' })
+        }
         if ($files.Count -eq 0) { throw "Package $package has no licence files in MSYS2." }
-        $target = Join-Path $licenses $short
-        New-Item -ItemType Directory -Force $target | Out-Null
         foreach ($file in $files) {
+            if ($file -match '/share/licenses/(.+)$') { $relative = $Matches[1] -replace '/', '\' }
+            else { $relative = Join-Path $short (Split-Path ($file -replace '/', '\') -Leaf) }
+            $target = Join-Path $licenses $relative
+            New-Item -ItemType Directory -Force (Split-Path $target) | Out-Null
             Copy-Item (Join-Path $Root ($file.TrimStart('/') -replace '/', '\')) $target
         }
         $rows += '{0,-22} {1,-14} {2}' -f $short, $packageVersion, ($owners[$package] -join ', ')
@@ -202,6 +220,7 @@ function Test-PackageLaunch([string]$PackageDir, [string]$Root) {
         $process.Refresh()
         $title = $process.MainWindowTitle
         $modules = @($process.Modules | ForEach-Object { $_.FileName })
+        $PackageDir = Split-Path $process.MainModule.FileName # long form, as module paths are
         $fromMsys = @($modules | Where-Object { Test-IsInside $_ $Root })
         $fromPackage = @($modules | Where-Object { Test-IsInside $_ $PackageDir })
         $elsewhere = @($modules | Where-Object {
@@ -272,7 +291,7 @@ try {
     if (Test-IsInside $OutputRoot $repo) { throw "OutputRoot $OutputRoot is inside the source folder." }
     $work = Join-Path $OutputRoot "work\$version"
     $build = Join-Path $work 'build'
-    $stage = Join-Path $work $name
+    $stage = Join-Path $work "Note-$version" # the folder inside the zip
     $zip = Join-Path $OutputRoot "$name.zip"
     $checksum = "$zip.sha256"
     $notes = Join-Path $OutputRoot "Note-$version-RELEASE_NOTES.md"
@@ -317,7 +336,7 @@ try {
     Write-Step 'Launch check (unzipped package, MSYS2 not on PATH)'
     $check = Join-Path $work 'launch-check'
     [IO.Compression.ZipFile]::ExtractToDirectory($zip, $check)
-    Test-PackageLaunch (Join-Path $check $name) $root
+    Test-PackageLaunch (Join-Path $check "Note-$version") $root
 
     Write-Step ('Done in {0:N1} minutes' -f ((Get-Date) - $started).TotalMinutes)
     Write-Host ("    {0} ({1:N1} MiB)" -f $zip, ((Get-Item $zip).Length / 1MB))
