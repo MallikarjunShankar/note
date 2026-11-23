@@ -8,6 +8,7 @@
 int main(int argc, char* argv[]) {
     QApplication application(argc, argv);
     QCoreApplication::setApplicationName(QStringLiteral("Note"));
+    QCoreApplication::setApplicationVersion(QStringLiteral(NOTE_VERSION));
     note::application::DocumentWorkflow workflow;
     note::application::SessionRecoveryService session(
         QStandardPaths::writableLocation(QStandardPaths::AppDataLocation));
