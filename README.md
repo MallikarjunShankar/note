@@ -1,8 +1,8 @@
 # NOTE
 
-**A lightweight, minimal, and highly customisable code editor.**
+**A lightweight, minimal, reliable, and highly customisable text editor.**
 
-NOTE is an open-source code editor focused on simplicity, performance, and customisation. It aims to provide an uncluttered coding experience while retaining the essential tools developers need.
+NOTE is an open-source text editor focused on simplicity, performance, reliability, and customisation. It aims to provide an uncluttered editing experience without becoming an IDE.
 
 The project is being built with a modular architecture, making it possible to extend and improve individual systems without compromising the overall application.
 
@@ -17,7 +17,7 @@ NOTE aims to provide:
 - **Lightweight performance** — fast startup, responsive editing, and efficient resource usage.
 - **Minimalism** — a clean interface without unnecessary IDE complexity.
 - **Customisation** — extensive control over editor appearance, themes, typography, and behaviour.
-- **Essential coding conveniences** — practical editing features without turning the application into a full IDE.
+- **Reliable editing conveniences** — document management, recovery, search and configurable commands without turning the application into a full IDE.
 - **Extensibility** — modular systems that can evolve independently over time.
 
 ## Technology
@@ -39,7 +39,7 @@ Current development priorities include:
 - Core document and file management.
 - Production text editing engine.
 - Cursor and selection management.
-- Syntax highlighting.
+- Command, customisation and search system integration.
 - Essential coding conveniences.
 - Theme and customisation system.
 - Command palette and keyboard shortcuts.
@@ -99,7 +99,7 @@ More detailed contribution guidelines will be added as the project develops.
 
 ## Project Philosophy
 
-NOTE is intended to be a code editor, not an IDE.
+NOTE is intended to be a text editor, not an IDE.
 
 The project prioritises:
 

@@ -14,15 +14,34 @@ This is the current status ledger for Note. “Complete” means implemented and
 | Phase 02 document foundation | **Partial** | Implementation includes production buffer/document ownership, ID-only tab order, lifecycle workflows, native dialogs, save/close prompts, encoding/line-ending handling, atomic persistence, chunked async open/reload, cancellation/progress, external-change monitoring, fingerprint-based save conflict protection, drag/drop opening, and external app/terminal launch. TextBuffer adopts initial snapshot storage and FileService streams buffer segments to avoid full-document copies during open/save. Focused regression tests cover external modifications, save conflict preservation, confirmed reload, missing-file detection, and segment traversal. The complete Windows Debug build and sequential CTest suite pass (9/9); the workflow test also passed 20 consecutive runs. Current-host Release benchmarks measure async opening but not progressive display. Reference-device and cross-platform validation, actual GUI key-to-paint/frame timing, and progressive content availability remain. Do not call Phase 02 verified or complete. |
 | V1 release readiness | **Not started** | No agreed editor features, file handling, recovery, platform validation, performance verification, or release packaging are complete. |
 
+## Revised V1 development sequence
+
+The remaining work is organised into integrated packages:
+
+1. **Commands, customisation and search** — Systems 06, 07 and 08.
+2. **Session and recovery** — System 09 integrated with application lifecycle.
+3. **Core completion and platform integration** — outstanding work in Systems 01–04 and 10.
+4. **V1 integration, validation and final performance optimisation**.
+5. **Windows packaging and release preparation**.
+
+The Language System (Phase 05 and System 05) is deferred until after V1 and is **Not started** by policy, not by an omission in implementation.
+
+## Outstanding owner decisions
+
+- Select the low-end reference device and confirm the provisional performance budgets.
+- Approve or reject Appendix A proposals: deeper personalisation, additional editing basics and post-V1 language coverage/detection.
+- Approve configuration, theme and recovery storage formats.
+- Approve build and packaging technology decisions for the Windows release.
+
 ## System status
 
 | System | Status | Remaining work |
 |---|---|---|
 | 01 Application Core | **Partial** | The entry point owns the document workflow lifetime and launches the Main Window. Full lifecycle coordination, application-wide state, bootstrap configuration, and resource handling remain. |
 | 02 User Interface | **Partial** | Main Window integrates per-document editor views with keyboard and mouse input, viewport rendering, tab switching, dirty presentation, and existing file workflows. The renderer supports configurable line numbers (absolute/relative), active-line highlighting, indentation guides, whitespace markers, matching identifier occurrences, and optional wrapping. Offscreen tests and a Release offscreen paint benchmark exist; persistent settings/theme integration, context menus, configurable commands/keybindings, accurate wrapped-row scrollbar proportions, real-display validation, and platform coverage remain. `DocumentPreview` remains in the build but is no longer the active editor surface. |
-| 03 Editor Engine | **Partial** | Production UTF-8 piece-table buffer with indexed piece/newline metadata, move-adopting constructors, segment-view traversal, and focused tests exists in `src/editor/`. Cursor/selection managers own scalar-safe multiple cursor and selection state; the editing engine batches multi-cursor edits, handles mixed selection/deletion and targeted cursor insertion, and rejects ambiguous ranges before mutation. Undo/Redo records grouped atomic transactions and restores document, cursor, and selection state. `BracketManager` supports configurable pairing for parentheses, square/curly brackets, and quotes, nested bracket matching, closer skipping, paired deletion, and quote-after-word suppression. `EditorView` integrates Alt+Click cursor toggling, multi-cursor editing/selections, and matching feedback with the viewport renderer. Basic inherited indentation and four-space Tab insertion are present. Language-aware string/comment context, configurable indentation, syntax services, broader command/input behavior, cross-platform validation, and reference-device performance validation remain. |
+| 03 Editor Engine | **Partial** | Production UTF-8 piece-table buffer with indexed piece/newline metadata, move-adopting constructors, segment-view traversal, and focused tests exists in `src/editor/`. Cursor/selection managers own scalar-safe multiple cursor and selection state; the editing engine batches multi-cursor edits, handles mixed selection/deletion and targeted cursor insertion, and rejects ambiguous ranges before mutation. Undo/Redo records grouped atomic transactions and restores document, cursor, and selection state. `BracketManager` supports configurable pairing for parentheses, square/curly brackets, and quotes, nested bracket matching, closer skipping, paired deletion, and quote-after-word suppression. `EditorView` integrates Alt+Click cursor toggling, multi-cursor editing/selections, and matching feedback with the viewport renderer. Basic inherited indentation and four-space Tab insertion are present. Configurable indentation, broader command/input behavior, cross-platform validation, reference-device performance validation and future post-V1 language integration remain. |
 | 04 Document Management | **Partial** | Production Document Model/Manager, ID-only tab ordering, application workflow, and Qt Core File Service support chunked background reads/reloads, progress/cancellation, UTF-8/BOM, BOM-marked UTF-16, mixed LF/CRLF/CR preservation, duplicate-path activation, segment-streamed saves, atomic commits, SHA-256 disk fingerprints, conflict rejection and safe reload publication. Focused tests cover lifecycle, external changes, conflict preservation, reload identity, missing files, and segment traversal; the Windows Debug suite passes. Formal platform and reference-device large-file validation remain. |
-| 05 Language System | **Not started** | Registry, data-driven detection/definitions, incremental highlighting, and cache remain. |
+| 05 Language System | **Deferred** | Deferred until after V1. V1 does not implement detection, registry, definitions, highlighting or cache; syntax-colour categories may be reserved in customisation data structures only. |
 | 06 Customisation | **Not started** | Settings, themes, typography/layout preferences, persistence, theme editor, and keybindings remain. |
 | 07 Command and Input | **Partial** | File actions use shared Qt `QAction` dispatch and standard shortcuts. `EditorView` handles essential text input, navigation, selection, clipboard, and undo/redo actions. The specified command registry/executor, configurable shortcut dispatcher, command palette, context menus, and broader input routing remain. |
 | 08 Search | **Not started** | Active-document find/replace, options, bounded regex handling, and match navigation remain. |

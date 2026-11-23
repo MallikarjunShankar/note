@@ -10,36 +10,37 @@ Items in Appendix A are **not in scope** until the project owner approves them.
 
 ## 1. PROJECT OVERVIEW
 
-Note is a lightweight, minimalistic, cross-platform code editor designed primarily for writing and editing source code.
+Note is a lightweight, minimalistic, highly customisable text editor designed primarily for reliable everyday editing.
 
 It provides a comfortable, responsive and distraction-free environment for programming without the complexity of a traditional IDE.
 
 The product is fundamentally a text editor with programming-oriented capabilities. It is not intended to compile, execute, debug, analyse or manage software projects.
 
-Core features:
+V1 core features:
 
-- Syntax highlighting.
-- Automatic language detection.
 - Smart indentation.
 - Configurable bracket and quote completion.
 - Matching bracket highlighting.
 - Multiple cursors.
 - Find and replace.
 - Customisable keyboard shortcuts.
+- Configurable commands.
 - Session restoration.
 - Crash recovery.
 - Extensive visual customisation.
 
 The application supports conventional mouse interaction and keyboard-only operation equally well.
 
-It works across Windows, Linux and macOS, with platform-specific functionality isolated behind common interfaces.
+Windows is the initial V1 distribution target. Linux and macOS remain supported by the platform-independent architecture, and cross-platform behaviour must be preserved; platform-specific functionality is isolated behind common interfaces.
 
 The project has two primary priorities, in this order:
 
-1. **Lightweight performance and minimalism.** Note should feel butter smooth even on the slowest supported devices.
-2. **Extensive customisation.** Every user should be able to make Note feel like their own personal editor rather than a generic tool.
+1. **Lightweight performance and minimalism.** Note should feel responsive and use resources efficiently.
+2. **Extensive visual and behavioural customisation.** Every user should be able to make Note feel like their own personal editor rather than a generic tool.
 
-Coding conveniences are important, but must not compromise either priority.
+Reliable document management and recovery, configurable commands and keyboard interaction, and coding conveniences are important, but must not compromise either priority.
+
+The Language System (Phase 05 and System 05) is deferred until after V1. V1 does not implement language detection, language registries, syntax definitions, syntax highlighting or incremental highlighting. The customisation architecture may retain data structures for future syntax-colour categories, but V1 has no syntax-highlighting runtime.
 
 **Conflict rule:** where a feature cannot meet the Performance Budget (section 7.0), the feature is simplified, made optional or not shipped. Performance wins.
 
@@ -192,61 +193,11 @@ The implementation avoids interfering unnecessarily with strings, comments and e
 
 ### 3.4 Syntax Highlighting
 
-Provide syntax highlighting for common programming and markup languages.
-
-Initial language coverage:
-
-- C
-- C++
-- Java
-- Python
-- JavaScript
-- TypeScript
-- HTML
-- CSS
-- JSON
-- SQL
-
-The language system is designed so that additional language definitions can be introduced as data, without modifying the editor engine.
-
-Syntax highlighting identifies relevant categories, including:
-
-- Keywords.
-- Identifiers.
-- Types.
-- Strings.
-- Numeric literals.
-- Comments.
-- Operators.
-- Punctuation.
-- Language-specific syntax elements.
-
-The highlighter supports incremental updates (see 7.4).
-
-The application does not require intelligent code analysis.
+**Deferred until after V1.** This section describes post-V1 direction only. V1 provides plain-text editing and does not implement language detection, syntax definitions or syntax highlighting. The customisation data model may reserve syntax-colour category structures for future use, but no runtime highlighting implementation is required for V1.
 
 ### 3.5 Language Detection
 
-The application automatically identifies the language of an opened file, primarily through its extension.
-
-Examples:
-
-- .c -> C
-- .cpp -> C++
-- .java -> Java
-- .py -> Python
-- .js -> JavaScript
-- .ts -> TypeScript
-- .html -> HTML
-- .css -> CSS
-- .json -> JSON
-- .sql -> SQL
-
-The extension-to-language mapping is stored as data, not hard-coded, so that ambiguous or additional extensions (for example `.h`, `.hpp`, `.cc`, `.htm`, `.mjs`) can be mapped without changing the engine.
-
-Unknown file types fall back to plain-text editing.
-
-Users can select a language manually.
+**Deferred until after V1.** V1 does not detect languages or expose manual language selection. Open documents use plain-text editing without a language identity.
 
 ### 3.6 Search
 
@@ -356,15 +307,9 @@ EDITOR COLOURS:
 - Indentation-guide colours.
 - Whitespace indicator colours.
 
-SYNTAX COLOURS:
-- Keywords.
-- Strings.
-- Comments.
-- Numbers.
-- Identifiers.
-- Types.
-- Operators.
-- Other supported syntax categories.
+SYNTAX COLOUR DATA (post-V1 reserve):
+- Future syntax categories may be represented in theme data structures.
+- V1 does not implement a syntax-highlighting runtime or apply these categories.
 
 INTERFACE COLOURS:
 - Window background.
@@ -656,7 +601,7 @@ DOCUMENT MODEL:
 Each document maintains:
 - File path.
 - File name.
-- Language identifier (as resolved by the Language System).
+- A post-V1 optional language identifier when the Language System is implemented.
 - File encoding.
 - Line-ending format.
 - Unsaved-change state.
@@ -723,8 +668,10 @@ It does not implement editing logic or syntax highlighting.
 
 ### SYSTEM 05: LANGUAGE SYSTEM
 
+**DEFERRED UNTIL AFTER V1**
+
 PURPOSE:
-Identify document languages and provide syntax highlighting.
+Identify document languages and provide syntax highlighting after the V1 scope is complete.
 
 COMPONENTS:
 
@@ -759,7 +706,7 @@ HIGHLIGHTING CACHE:
 - Avoid unnecessary repeated processing.
 
 BOUNDARIES:
-The Language System handles language identification and visual syntax classification only.
+The post-V1 Language System may handle language identification and visual syntax classification only.
 
 It does not provide autocomplete, intelligent analysis, diagnostics, compilation or language-server functionality.
 
@@ -1068,7 +1015,7 @@ LANGUAGE IDENTIFICATION:
 Owned by the Language System.
 
 SYNTAX INFORMATION:
-Owned by the Syntax Highlighter and its cache.
+Post-V1 ownership: the Syntax Highlighter and its cache.
 
 THEME DEFINITIONS:
 Owned by the Theme Manager.
@@ -1179,7 +1126,7 @@ Maintain responsive:
 - Scrolling.
 - Text retrieval.
 - Search.
-- Syntax highlighting.
+- Post-V1 syntax highlighting.
 
 The application avoids expensive operations when document size or line length makes them impractical (see 7.0, graceful degradation).
 
@@ -1317,119 +1264,51 @@ Components may initially share files where appropriate, provided their responsib
 
 ## 9. DEVELOPMENT ORDER
 
-Implementation proceeds in dependency order.
+The remaining development is reorganised into integrated work packages. Performance work is contained within implementation as justified by measured needs; comprehensive profiling and optimisation belong to integrated V1 validation. Phase 05 and System 05 remain deferred until after V1.
 
-Foundations that many later systems depend on (settings and theme tokens, the command registry, file dialogs, a minimal renderer and the benchmark harness) are introduced early in minimal form and expanded in later phases, so that nothing has to be retrofitted.
+WORK PACKAGE 1: Commands, Customisation and Search
 
-PHASE 01: APPLICATION FOUNDATION
+- Integrate Systems 06, 07 and 08.
+- Complete settings and theme ownership and persistence.
+- Implement theme editing and live preview.
+- Complete typography, layout and configurable keybindings.
+- Complete command registration, execution, input routing, shortcuts and the command palette.
+- Implement active-document find and replacement.
 
-- Establish project and build configuration.
-- Implement application entry.
-- Implement lifecycle management.
-- Implement shared application state.
-- Implement configuration loading (bootstrap only).
-- Implement a minimal Settings Manager and Theme Manager. All colours and fonts are read from theme tokens and settings from the start, with no hard-coded visual values.
-- Implement a minimal Command Registry and Command Executor.
-- Establish the main window.
+Dependencies: stable application lifecycle and document/editor state.
 
-PHASE 02: DOCUMENT FOUNDATION
+WORK PACKAGE 2: Session and Recovery
 
-- Implement Document Model.
-- Implement Text Buffer.
-- Implement Document Manager.
-- Implement Tab Manager.
-- Implement File Service, including atomic saves.
-- Implement file opening.
-- Implement file saving.
-- Implement basic document switching.
-- Implement minimal native open/save file dialogs (the full platform adapter follows in Phase 09).
-- Establish the benchmark harness and record baseline numbers on the reference device.
-- Set the large-file and long-line degradation thresholds.
+- Implement System 09 and integrate it with application lifecycle.
+- Implement session restoration and dirty-only, debounced recovery snapshots.
+- Test recovery publication, crash continuity and lifecycle edge cases.
 
-PHASE 03: CORE EDITOR
+Dependencies: complete document lifecycle, close/save behavior and application bootstrap state.
 
-- Implement a minimal Editor Renderer and Drawing Surface so that editing can be exercised and tested visually.
-- Implement text insertion and deletion.
-- Implement cursor movement.
-- Implement selections.
-- Implement undo and redo.
-- Implement smart indentation.
-- Implement bracket pairing.
-- Implement bracket matching.
-- Implement multiple cursors.
+WORK PACKAGE 3: Core Completion and Platform Integration
 
-PHASE 04: EDITOR PRESENTATION
+- Complete outstanding implementation and validation work in Systems 01–04.
+- Complete platform-facing work in System 10.
+- Finish native lifecycle behavior and cross-platform abstraction without Windows-only assumptions.
+- Complete representative document/editor behavior and file handling.
 
-- Implement line numbers.
-- Implement current-line highlighting.
-- Implement indentation guides.
-- Implement whitespace visibility.
-- Implement matching occurrence highlighting.
-- Implement word wrapping.
-- Implement relative line numbers.
+Windows is the initial V1 distribution target. Platform-independent behavior remains a requirement.
 
-PHASE 05: LANGUAGE SYSTEM
+WORK PACKAGE 4: V1 Integration, Validation and Final Performance Optimisation
 
-- Implement Language Registry.
-- Implement Language Detector (data-driven).
-- Implement syntax definitions.
-- Implement Syntax Highlighter.
-- Implement incremental, viewport-first highlighting.
+- Integrate all agreed V1 systems.
+- Test application workflows, document integrity, recovery behavior and customisation persistence.
+- Perform comprehensive profiling and final optimisation against the reference-device budget.
+- Validate startup, idle resource use, editing, rendering, large files and long lines.
+- Complete cross-platform builds and user/developer documentation.
 
-PHASE 06: CUSTOMISATION
+WORK PACKAGE 5: Windows Packaging and Release Preparation
 
-- Complete the Settings Manager.
-- Complete the Theme Manager.
-- Implement Theme Storage.
-- Implement Theme Editor.
-- Implement live preview.
-- Implement theme importing and exporting.
-- Complete the Typography Manager.
-- Implement Layout Manager.
-- Implement Keybinding Manager.
+- Prepare Windows release artifacts and packaging.
+- Validate installation, first-run behavior, resources and the packaged application.
+- Complete release verification and publishable documentation.
 
-PHASE 07: COMMAND AND SEARCH
-
-- Complete the Command Registry and Command Executor.
-- Implement Input Handler.
-- Implement Shortcut Dispatcher.
-- Implement Command Palette.
-- Implement Find and Replace.
-- Implement Search Options.
-
-PHASE 08: SESSION AND RECOVERY
-
-- Implement Session Manager.
-- Implement session restoration.
-- Implement Recovery Manager.
-- Implement periodic snapshots.
-- Implement crash recovery.
-
-PHASE 09: PLATFORM INTEGRATION
-
-- Complete native file dialogs.
-- Complete filesystem abstraction.
-- Implement drag-and-drop.
-- Implement external application launching.
-- Implement terminal launching.
-- Implement External Modification Detector.
-- Validate supported operating systems.
-
-PHASE 10: VALIDATION AND OPTIMISATION
-
-Performance is measured in every phase through the benchmark harness. This phase is the final full verification, not the first.
-
-- Test system integration.
-- Test document integrity.
-- Test recovery behaviour.
-- Test customisation persistence.
-- Test keyboard-only operation.
-- Test mouse interaction.
-- Test large-file behaviour.
-- Verify startup time against the budget.
-- Verify memory consumption against the budget.
-- Verify keystroke latency against the budget.
-- Fix remaining performance bottlenecks.
+The original phased systems remain useful historical labels, but the development sequence above supersedes their old post-foundation order. Performance is measured throughout implementation, but no dedicated optimisation phase precedes the integrated V1.
 
 The development order may be adjusted when dependencies justify it, but system boundaries and product scope must remain unchanged.
 
@@ -1581,7 +1460,7 @@ The following decisions remain open and must be evaluated before application sca
 3. Text-editing implementation.
 4. Text-rendering approach.
 5. Text-buffer data structure.
-6. Syntax-highlighting implementation.
+6. Post-V1 Language System implementation.
 7. Configuration file format.
 8. Theme file format.
 9. Recovery storage format.
@@ -1615,9 +1494,7 @@ The application is successful when it satisfies the following.
 
 ### FUNCTIONALITY
 
-- Users can open and edit source-code files.
-- Syntax highlighting works for supported languages.
-- Automatic language detection works.
+- Users can open and edit text and source-code files without a syntax-highlighting runtime.
 - Indentation behaves correctly.
 - Bracket pairing behaves correctly.
 - Multiple cursors work.
@@ -1629,7 +1506,8 @@ The application is successful when it satisfies the following.
 ### CUSTOMISATION
 
 - Users can create custom themes.
-- Individual UI and syntax colours can be changed.
+- Individual interface and currently supported editor colours can be changed.
+- Theme data may retain future syntax-colour category structures, but V1 does not apply them.
 - Theme changes appear immediately in previews.
 - Themes can be imported and exported.
 - Fonts and editor appearance can be customised.
@@ -1656,9 +1534,9 @@ The application is successful when it satisfies the following.
 
 ### CROSS-PLATFORM
 
-- The application works on Windows.
-- The application works on Linux.
-- The application works on macOS.
+- Windows is the initial V1 release target.
+- The application architecture remains platform-independent.
+- Linux and macOS behavior is preserved and validated where supported.
 - Filesystem behaviour is correct.
 - Platform-specific functionality works correctly.
 
@@ -1666,11 +1544,11 @@ The application is successful when it satisfies the following.
 
 ## 14. FINAL PRODUCT DEFINITION
 
-Note is a lightweight, cross-platform code editor that prioritises fast startup, low resource consumption, responsive editing and a minimal interface.
+Note is a lightweight, minimal, reliable and highly customisable text editor that prioritises fast startup, low resource consumption, responsive editing and configurable interaction.
 
-It provides essential programming conveniences such as syntax highlighting, smart indentation, bracket completion, multiple cursors and document-level search.
+It provides essential editing conveniences such as smart indentation, bracket completion, multiple cursors and document-level search.
 
-Its second major strength is customisation, particularly a complete visual theme editor, configurable fonts, keyboard shortcuts, interface layout and editing behaviour, so that every user can make it their own.
+Its second major strength is customisation, particularly a complete visual theme editor, configurable fonts, keyboard shortcuts, commands, interface layout and editing behaviour, so that every user can make it their own.
 
 The application is intentionally file-oriented and does not attempt to replace a full IDE.
 
