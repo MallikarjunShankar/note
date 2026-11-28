@@ -26,6 +26,10 @@ jobs:
             mingw-w64-ucrt-x86_64-ninja
             mingw-w64-ucrt-x86_64-qt6-base
 
+      - name: Install Inno Setup
+        shell: powershell
+        run: choco install innosetup --yes --no-progress
+
       - name: Build, test and package
         shell: powershell
         run: >-
@@ -40,5 +44,7 @@ jobs:
           path: |
             ${{ runner.temp }}/note-release/Note-*.zip
             ${{ runner.temp }}/note-release/Note-*.zip.sha256
+            ${{ runner.temp }}/note-release/Note-*-windows-x64-Setup.exe
+            ${{ runner.temp }}/note-release/Note-*-windows-x64-Setup.exe.sha256
             ${{ runner.temp }}/note-release/Note-*-RELEASE_NOTES.md
           if-no-files-found: error

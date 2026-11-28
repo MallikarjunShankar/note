@@ -26,6 +26,7 @@
 [CmdletBinding()]
 param(
     [string]$Msys2Root,
+    [string]$InnoSetupCompiler,
     [string]$OutputRoot,
     [ValidateRange(1, 64)][int]$Jobs = 2
 )
@@ -87,6 +88,39 @@ function Find-Msys2Root([string]$Explicit) {
     throw 'MSYS2 UCRT64 toolchain not found. Install MSYS2 and the packages listed in docs/RELEASE.md, or pass -Msys2Root.'
 }
 
+
+function Find-InnoSetupCompiler([string]$Explicit) {
+    $candidates = @()
+
+    if ($Explicit) {
+        $candidates += $Explicit
+    } else {
+        $command = Get-Command ISCC.exe -ErrorAction SilentlyContinue
+        if ($command) { $candidates += $command.Source }
+
+        if ($env:LOCALAPPDATA) {
+            $candidates += Join-Path $env:LOCALAPPDATA 'Programs\Inno Setup 7\ISCC.exe'
+        }
+        if ($env:ProgramFiles) {
+            $candidates += Join-Path $env:ProgramFiles 'Inno Setup 7\ISCC.exe'
+        }
+        if (${env:ProgramFiles(x86)}) {
+            $candidates += Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 7\ISCC.exe'
+        }
+    }
+
+    foreach ($candidate in $candidates) {
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+            return (Resolve-Path -LiteralPath $candidate).Path
+        }
+    }
+
+    if ($Explicit) {
+        throw "Inno Setup compiler not found at '$Explicit'."
+    }
+
+    throw 'Inno Setup compiler (ISCC.exe) not found. Install Inno Setup 7 or pass -InnoSetupCompiler.'
+}
 function Test-IsInside([string]$Path, [string]$Folder) {
     $path = [IO.Path]::GetFullPath($Path).TrimEnd('\') + '\'
     $folder = [IO.Path]::GetFullPath($Folder).TrimEnd('\') + '\'
@@ -278,6 +312,10 @@ try {
     Write-Host "    CMake $cmakeVersion, Ninja $(@(Get-NativeOutput $tools['ninja'] @('--version'))[0]), Qt $qtVersion"
     Write-Host "    PowerShell $($PSVersionTable.PSVersion), $(@(Get-NativeOutput $git.Source @('--version'))[0])"
 
+    Write-Step 'Installer compiler'
+    $iscc = Find-InnoSetupCompiler $InnoSetupCompiler
+    Write-Host "    $iscc"
+
     Write-Step 'Source tree'
     $dirty = @(Get-NativeOutput $git.Source @('-C', $repo, 'status', '--porcelain'))
     if ($dirty.Count -gt 0) {
@@ -295,7 +333,9 @@ try {
     $zip = Join-Path $OutputRoot "$name.zip"
     $checksum = "$zip.sha256"
     $notes = Join-Path $OutputRoot "Note-$version-RELEASE_NOTES.md"
-    foreach ($old in $work, $zip, $checksum, $notes) {
+    $setup = Join-Path $OutputRoot "Note-$version-windows-x64-Setup.exe"
+    $setupChecksum = "$setup.sha256"
+    foreach ($old in $work, $zip, $checksum, $notes, $setup, $setupChecksum) {
         if (Test-Path $old) { Remove-Item $old -Recurse -Force }
     }
     New-Item -ItemType Directory -Force $work | Out-Null
@@ -333,6 +373,19 @@ try {
     Set-Content -Path $checksum -Value "$hash  $name.zip" -Encoding Ascii
     Copy-Item (Join-Path $stage 'RELEASE_NOTES.md') $notes
 
+    Write-Step 'Build installer'
+    $icon = Join-Path $repo 'packaging\note.ico'
+    $installerScript = Join-Path $repo 'packaging\Note.iss'
+    Invoke-Native $iscc @(
+        "/DAppVersion=$version",
+        "/DSourceDir=$stage",
+        "/DOutputDir=$OutputRoot",
+        "/DIconFile=`"$icon`"",
+        $installerScript
+    )
+    $setupHash = (Get-FileHash $setup -Algorithm SHA256).Hash.ToLowerInvariant()
+    Set-Content -Path $setupChecksum -Value "$setupHash  $(Split-Path $setup -Leaf)" -Encoding Ascii
+
     Write-Step 'Launch check (unzipped package, MSYS2 not on PATH)'
     $check = Join-Path $work 'launch-check'
     [IO.Compression.ZipFile]::ExtractToDirectory($zip, $check)
@@ -342,6 +395,9 @@ try {
     Write-Host ("    {0} ({1:N1} MiB)" -f $zip, ((Get-Item $zip).Length / 1MB))
     Write-Host "    $checksum"
     Write-Host "    SHA-256 $hash"
+    Write-Host "    $setup"
+    Write-Host "    $setupChecksum"
+    Write-Host "    Installer SHA-256 $setupHash"
     Write-Host "    $notes"
     exit 0
 } catch {

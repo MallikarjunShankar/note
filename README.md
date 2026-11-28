@@ -2,102 +2,90 @@
 
 **A lightweight, minimal, reliable, and highly customisable text editor.**
 
-NOTE is an open-source text editor focused on simplicity, performance, reliability, and customisation. It aims to provide an uncluttered editing experience without becoming an IDE.
+NOTE is an open-source desktop text editor focused on simplicity, performance, reliability, and customisation. It provides a focused editing environment without the complexity of an IDE.
 
-The project is being built with a modular architecture, making it possible to extend and improve individual systems without compromising the overall application.
+**Current release:** 1.0.0-rc.1 (Windows x64 release candidate).
 
-> **Status: Early development**
->
-> NOTE is actively being developed. It is not yet ready for everyday use. Features, interfaces, and internal architecture may change as development progresses.
+The initial distribution target is Windows. The application is built with C++20, Qt 6 Widgets, and CMake.
 
-## Vision
+## Features
 
-NOTE aims to provide:
+- Plain-text editing with multiple tabs and multiple cursors.
+- Undo and redo, smart indentation, and bracket/quote pairing.
+- Find and replace with regular-expression, case-sensitive, and whole-word options.
+- Custom themes, including a visual theme editor.
+- Configurable typography, layout, editing preferences, and keyboard shortcuts.
+- Command palette, menus, and context menus.
+- Session restoration and crash recovery for unsaved documents.
+- UTF-8 and supported encoding/line-ending preservation.
+- Atomic file saving and external-modification detection.
+- Opening files in external applications and terminals.
 
-- **Lightweight performance** — fast startup, responsive editing, and efficient resource usage.
-- **Minimalism** — a clean interface without unnecessary IDE complexity.
-- **Customisation** — extensive control over editor appearance, themes, typography, and behaviour.
-- **Reliable editing conveniences** — document management, recovery, search and configurable commands without turning the application into a full IDE.
-- **Extensibility** — modular systems that can evolve independently over time.
+NOTE is a text editor, not an IDE. It does not include an embedded terminal, project explorer, autocomplete, diagnostics, build system, or integrated Git interface.
 
-## Technology
+Syntax highlighting and language detection are deferred until after V1.
 
-NOTE is built using:
+## Download
 
-- **C++20**
-- **Qt 6 Widgets**
-- **CMake**
+Windows x64 release packages are distributed through:
 
-The application is designed as a native desktop application without an embedded browser runtime.
+[NOTE GitHub Releases](https://github.com/MallikarjunShankar/note/releases)
 
-## Project Status
+For the current release candidate, use the matching Windows x64 package and SHA-256 checksum from the release or workflow artifact.
 
-NOTE is under active development.
+The Windows installer provides a standard installation. The portable ZIP remains available for users who prefer not to install NOTE.
 
-Current development priorities include:
+### Portable usage
 
-- Completing and integrating application, editor, document and platform behavior.
-- Validating settings, themes, commands, search, session restoration and recovery together.
-- Windows-first release preparation while preserving cross-platform system boundaries.
-- Measuring integrated V1 performance on an owner-approved reference device.
+1. Download the Windows x64 ZIP.
+2. Verify its SHA-256 checksum.
+3. Extract the archive.
+4. Run `note.exe`.
 
-These are development goals, not a claim that all features are currently implemented.
+The package does not require a separate installer.
 
-## Building from Source
+User settings, themes, session state, and recovery data are stored under %APPDATA%\Note.
+
+## Building from source
 
 ### Requirements
 
-- A C++20-compatible compiler.
-- CMake.
-- Qt 6 with Widgets.
-- A supported build system, such as Ninja or Make.
+- C++20-compatible compiler.
+- CMake 3.24 or later.
+- Qt 6.5 or later with Widgets.
+- Ninja or another supported build system.
 
 ### Build
 
-Clone the repository:
-
-```bash
+```powershell
 git clone https://github.com/MallikarjunShankar/note.git
 cd note
-```
 
-Configure the project:
-
-```bash
 cmake -S . -B build
-```
-
-Build:
-
-```bash
 cmake --build build --config Release
 ```
 
-Run the resulting executable from the build output directory.
+Run tests:
 
-**Note:** Build configuration may require your Qt 6 installation to be discoverable by CMake.
+```powershell
+ctest --test-dir build --output-on-failure
+```
+
+For the documented Windows release toolchain, packaging, and CI workflow, see [docs/RELEASE.md](docs/RELEASE.md).
+
+## Project status
+
+The integrated Windows release candidate has been built and manually tested as a packaged application.
+
+The project is still subject to outstanding validation, including physical low-end hardware, real-display performance, accessibility, and Linux/macOS runtime behavior. See [docs/STATUS.md](docs/STATUS.md) for the implementation ledger and [docs/PERFORMANCE.md](docs/PERFORMANCE.md) for measured performance and limitations.
 
 ## Contributing
 
-Contributions are welcome.
+Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md), [PROJECT_SPEC.md](PROJECT_SPEC.md), and [AGENTS.md](AGENTS.md) before making substantial changes.
 
-NOTE is being developed with a focus on maintainability, modularity, and performance. Contributions should respect the project's architecture and established development conventions.
+Contributions should preserve NOTE's lightweight architecture, reliability, performance, and customisation goals.
 
-Before contributing:
-
-1. Check existing issues and discussions.
-2. Discuss substantial changes before implementation.
-3. Keep changes focused and independently reviewable.
-4. Include relevant tests.
-5. Ensure the project builds successfully.
-
-More detailed contribution guidelines will be added as the project develops.
-
-## Project Philosophy
-
-NOTE is intended to be a text editor, not an IDE.
-
-The project prioritises:
+## Project principles
 
 - Simplicity over unnecessary complexity.
 - Performance over excessive features.
@@ -107,10 +95,10 @@ The project prioritises:
 
 ## License
 
-NOTE is licensed under the [MIT License](LICENSE).
+NOTE is distributed under the [MIT License](LICENSE).
 
-You are free to use, modify, distribute, and build upon the project under the terms of that license.
+Bundled third-party libraries retain their respective licenses.
 
 ## Repository
 
-GitHub: https://github.com/MallikarjunShankar/note
+[GitHub: MallikarjunShankar/note](https://github.com/MallikarjunShankar/note)

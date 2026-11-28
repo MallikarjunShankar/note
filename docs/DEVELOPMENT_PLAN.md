@@ -1,114 +1,91 @@
 # Development plan
 
-This plan reflects the approved revised NOTE V1 direction. `PROJECT_SPEC.md` remains authoritative.
+This document records NOTE's current post-release-candidate direction. PROJECT_SPEC.md remains authoritative for product scope.
 
-NOTE V1 is a lightweight, minimalistic, reliable and highly customisable text editor. Its priorities are:
+## Product direction
 
-1. Lightweight performance.
-2. Extensive visual and behavioural customisation.
+NOTE is a lightweight, minimalistic, reliable, and highly customisable text editor.
+
+Its priorities are:
+
+1. Lightweight performance and minimalism.
+2. Visual and behavioural customisation.
 3. Configurable commands and keyboard interaction.
 4. Reliable document management and recovery.
 
-NOTE is not intended to become an IDE. Windows is the initial V1 distribution target, while shared systems remain platform-independent and preserve Linux/macOS compatibility.
-
-Performance is fundamental throughout development. Sensible, contained optimisations may be made when justified by actual implementation work. Do not create dedicated optimisation phases before the integrated V1 exists. Comprehensive profiling and optimisation are reserved for integrated V1 validation.
+NOTE is not an IDE. Windows is the initial distribution target. Shared systems should preserve platform-independent boundaries.
 
 ## Current position
 
-The isolated architecture prototype is complete as a research milestone; it is not production editor functionality.
+The integrated Windows V1 implementation has reached release-candidate packaging.
 
-The application currently has partial implementation across the application shell, document lifecycle, text editing, customisation, commands/search, session recovery and platform-facing file behavior:
+The 1.0.0-rc.1 Windows x64 package was built through the release workflow, passed its automated release checks, and was manually extracted and tested.
 
-- CMake/C++20/Qt 6 production shell work is in place on the development Windows host.
-- Production UTF-8 piece-table editing, document ownership, tab identity, workflow, native dialogs and chunked Qt file service behavior exist.
-- Project-owned viewport rendering, cursor/selection management, undo/redo, pairing, configurable line indentation, wrapped-row scrollbar indexing and presentation settings are integrated, with offscreen coverage.
-- Systems 06–08 have a shared command, keybinding, customisation and search implementation. Settings and theme previews apply to existing editor views without replacing buffers.
-- System 09 has atomic session persistence, path/order/active/cursor restoration, unclean-run detection, separate dirty-buffer snapshots and explicit recovery choices integrated with Application Core.
-- The Windows Debug build and current CTest suite pass (15/15), but reference-device, cross-platform, real-display, broader lifecycle and release validation remain incomplete.
+The implementation includes:
 
-Measured current-host performance and technical evidence remain in [`PERFORMANCE.md`](PERFORMANCE.md). Historical partial or complete evidence does not waive unresolved acceptance gates.
+- A project-owned UTF-8 editor engine and viewport renderer.
+- Document creation, opening, editing, saving, and tab workflows.
+- Undo/redo, multiple cursors, indentation, and bracket/quote pairing.
+- Settings, custom themes, theme editing, and keybinding customisation.
+- A command registry, command palette, and shared shortcut dispatch.
+- Active-document search and replacement.
+- Session restoration and unsaved-document crash recovery.
+- Windows file integration and portable release packaging.
 
-## Revised remaining work packages
+This release-candidate milestone does not mean every system or product acceptance target is complete.
 
-Implementation proceeds in the following integrated packages. Dependencies must be completed within earlier packages before later integration claims are made.
+## Remaining validation
 
-### 1. Commands, customisation and search
+### Performance and hardware
 
-**Systems:** 06, 07 and 08.
+- Select and approve a low-end reference device.
+- Confirm the provisional performance budget.
+- Validate startup, idle memory, typing latency, large-file opening, and scrolling.
+- Measure real-display frame pacing and input-to-photon behavior.
+- Address demonstrated performance failures without compromising correctness.
 
-- Complete settings and theme ownership and persistence.
-- Implement theme editing, live preview, import/export and invalid-value fallback.
-- Complete typography, layout and editing-preference behavior.
-- Complete the command registry/executor and unify existing Qt actions behind it.
-- Implement input routing, configurable shortcut dispatch, shortcut conflict handling and command palette behavior.
-- Implement active-document find/replace, search options and bounded regular-expression handling.
+See [PERFORMANCE.md](PERFORMANCE.md).
 
-**Dependencies:** stable application lifecycle, document/editor state and usable theme/settings tokens.
+### Platform integration
 
-### 2. Session and recovery
+- Validate native dialogs and file operations on supported platforms.
+- Validate drag/drop and external application/terminal launching.
+- Test Linux and macOS builds and runtime behavior before claiming support for those platforms.
 
-**System:** 09, integrated with application lifecycle.
+### Accessibility and usability
 
-- Implement session restoration and tab/session state publication.
-- Implement separate, debounced dirty-only recovery snapshots.
-- Integrate recovery and session behavior with startup, shutdown, close prompts and document opening.
-- Test crash continuity, stale recovery data, file identity and unsaved-state edge cases.
+- Evaluate keyboard-only operation on a real display.
+- Assess screen-reader accessibility.
+- Validate HiDPI and multi-monitor behavior.
 
-**Dependencies:** complete document lifecycle and application-owned bootstrap/lifecycle state.
+### Maintenance
 
-### 3. Core completion and platform integration
-
-**Systems:** outstanding work in 01–04 and 10.
-
-- Complete application bootstrap, shared state, resource handling and lifecycle coordination.
-- Complete UI behavior, persistent presentation settings, wrapped scrollbar behavior and real-display validation.
-- Complete core editor behavior, indentation/configuration and reference-device validation.
-- Complete document-management edge cases, progressive usability and platform validation.
-- Complete drag/drop, external-app behavior and filesystem integration behind common interfaces; report failures without silently ignoring them.
-- Build and smoke-test shared behavior without Windows-only assumptions.
-
-**Dependencies:** all prior work uses existing ownership boundaries and does not move document/editor/file state into the UI or engine.
-
-### 4. V1 integration, validation and final performance optimisation
-
-- Integrate customisation, commands/search, recovery and core document/editor behavior.
-- Run document-integrity, lifecycle, recovery, customisation-persistence and end-to-end workflow tests.
-- Complete user/developer documentation and cross-platform validation.
-- Reserve comprehensive profiling for this stage.
-- Measure and optimise startup, idle resource use, typing latency, rendering, search, opening, saving and large/long-line behavior against the owner-confirmed reference-device budget.
-- Resolve regressions found by measured validation; no unmeasured dedicated optimisation phase replaces this integration stage.
-
-**Dependencies:** integrated packages 1–3 and the complete V1 feature set.
-
-### 5. Windows packaging and release preparation
-
-- Prepare Windows packaging and release artifacts.
-- Validate installation, first run, resources, updates where applicable and launch behavior.
-- Run packaged-release smoke tests and release verification.
-- Finalise release and distribution documentation.
-
-**Dependencies:** package 4 acceptance and confirmed Windows build/toolchain behavior.
+- Keep automated tests and release workflows passing.
+- Update documentation alongside behavioral or architectural changes.
+- Keep changes focused and avoid unnecessary dependencies or refactoring.
 
 ## Explicitly deferred: Language System
 
-**Phase 05 and System 05 are deferred until after V1.**
+Phase 05 and System 05 remain deferred until after V1.
 
-The remaining work does not include:
+The deferred scope includes:
 
 - Language detection.
 - Language registry.
-- Syntax highlighting.
 - Syntax definitions.
+- Syntax highlighting.
 - Incremental highlighting.
 
-The customisation architecture may retain data structures for future syntax-colour categories, but V1 requires no syntax-highlighting runtime.
+No syntax-highlighting runtime is required for the current release candidate.
 
-## Owner decisions still outstanding
+## Scope control
 
-- Name and approve the low-end reference device and confirm the provisional performance budget.
-- Approve a configuration-file format and theme-file format.
-- Approve the recovery storage format.
-- Approve the build and packaging technology details.
-- Approve or reject each proposal in `PROJECT_SPEC.md` Appendix A before it enters V1 scope.
+Items in PROJECT_SPEC.md Appendix A remain unapproved unless explicitly accepted by the project owner. Do not silently promote proposed features into V1 scope.
 
-No Appendix A item is approved by this plan.
+Performance budgets remain provisional until the reference device and thresholds are approved.
+
+## Release infrastructure
+
+The Windows release workflow is manually triggered through GitHub Actions. It builds and tests a clean Release configuration, deploys runtime dependencies, generates the portable ZIP and Windows installer with SHA-256 checksums, and performs an isolated launch check.
+
+See [RELEASE.md](RELEASE.md) for the release procedure.

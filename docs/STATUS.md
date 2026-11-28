@@ -6,13 +6,13 @@ This is the current status ledger for Note. “Complete” means implemented and
 
 | Area | Status | Evidence / remaining work |
 |---|---|---|
-| Repository and build configuration | **Partial** | Git baseline is established. CMake/C++20/Qt 6.9.1 production shell builds on the current Windows host; Linux/macOS deployment and V1 release packaging remain. |
+| Repository and build configuration | **Partial** | Git baseline, CMake/C++20/Qt 6 build, Windows CI, and Windows release packaging workflow are established. The 1.0.0-rc.1 Windows x64 release candidate has been built and manually smoke-tested as an extracted package. Linux/macOS builds and deployment remain unvalidated. |
 | Application shell | **Partial** | QApplication/QMainWindow integrates New/Open/Save/Save As/Close, native dialogs, document tabs, close prompts, per-document editing views, and System 09 startup/shutdown coordination through a separate session/recovery service. Full lifecycle, cross-platform and V1 validation remain. |
 | Technology evaluation | **Partial** | Isolated project-owned widget and gap/piece buffer benchmarks are recorded in `docs/EDITOR_PROTOTYPE.md`. QScintilla was not measured; the low-end reference device and cross-platform validation remain outstanding. |
 | Editor architecture decision | **Partial** | Project-owned viewport renderer is provisionally selected. The production buffer now uses an indexed implicit-treap piece table with newline indexes, but worst-case fragmentation, long-line and reference-device behavior remain. |
 | Hardware targets and performance budgets | **Partial** | The development host is characterized and startup, idle memory, 1/10/50 MiB async-open, and 1/10/50/100 MiB FileService measurements are recorded in `docs/PERFORMANCE.md`. A 50 MiB copy-reduction comparison lowered sampled async-open peak private bytes by 32.9%; startup and idle memory missed provisional values on that host. On the 4 GB i5 laptop, the stabilisation pass measured warm-cache startup to first visible window at 126.8 ms median after the GUI-subsystem fix; typing (22.2 ms CPU edit+repaint) and 50 MB open still fail, and scrolling frame pacing is unmeasured. Values remain unconfirmed; the owner has not selected a reference device, and real-display, low-end, and cross-platform validation remain. |
 | Phase 02 document foundation | **Partial** | Implementation includes production buffer/document ownership, ID-only tab order, lifecycle workflows, native dialogs, save/close prompts, encoding/line-ending handling, atomic persistence, chunked async open/reload, cancellation/progress, external-change monitoring with surfaced inspection errors, fingerprint-based save conflict protection, drag/drop opening, and external app/terminal launch. TextBuffer adopts initial snapshot storage and FileService streams buffer segments to avoid full-document copies during open/save. Focused regression tests cover external modifications, save conflict preservation, confirmed reload, missing-file detection, and segment traversal. The Windows Debug and Release builds and current CTest suite pass (16/16 on 2026-11-23 with MSYS2 UCRT64 GCC 16.2/Qt 6.12); reference-device and cross-platform validation, actual GUI key-to-paint/frame timing, and progressive content availability remain. Do not call Phase 02 verified or complete. |
-| V1 release readiness | **Partial** | The integrated verification pass and the stabilisation pass (both 2026-11-23, below) fixed demonstrated defects, each with a regression test, and recorded measurements in `docs/PERFORMANCE.md`. V1 is **not** verified: typing and 50 MB open miss provisional targets and scrolling is unmeasured on available hardware; no reference device is selected; manual native-display, keyboard, screen-reader and native-dialog walkthroughs, Linux/macOS validation, user/developer documentation and release packaging are outstanding. |
+| V1 release readiness | **Release candidate validated** | Windows x64 release candidate 1.0.0-rc.1 built through the release workflow. The packaged application was extracted and manually launched; basic functionality and the custom theme creation dialog were checked. This validates the tested Windows package, not all product acceptance criteria. Physical reference-device performance, real-display frame pacing, accessibility, and Linux/macOS validation remain outstanding. |
 
 ## Revised V1 development sequence
 
@@ -75,3 +75,22 @@ Toolchain: MSYS2 UCRT64 at `C:/msys64/ucrt64` with GCC 16.2.0, Qt 6.12.0, CMake 
 | Deferred defects addressed | The docs had no explicit defect list, so the items taken were the defect-like remaining work in Systems 07/08: cross-chunk Unicode search offsets (fixed), shortcut-conflict UX naming (fixed), and chunk-level regex timeout (not fixed in this pass; addressed by the stabilisation pass above). |
 | Performance | One evidence-based optimisation: full-document re-search per keystroke, measured at ~113–123 ms with a closed pattern on 10 MiB, now ~2 ms. Integrated measurements and limitations are in `docs/PERFORMANCE.md`. Typing and startup miss the provisional targets on this 4 GB i5 host. |
 | Functional workflow | Exercised by automated offscreen smoke and lifecycle tests: create/open/edit/save/close, tabs, cursor/selection, undo/redo, find/replace, commands/shortcuts, settings/themes, session restore/recovery, and Unicode/line endings. `note.exe` was also launched and closed 21 times on the native platform; the final session file recorded `cleanShutdown: true`, but individual run exits were not logged. A manual end-to-end walkthrough on a real display, native dialogs, drag/drop, external app/terminal launch and crash injection were **not** performed in this pass. |
+
+## Windows release candidate validation (1.0.0-rc.1)
+
+- Release workflow completed successfully on the repository's Windows runner.
+- Release build and automated test suite completed successfully.
+- Windows x64 package was generated and downloaded.
+- Packaged application was extracted and launched outside the development build.
+- Basic editing and packaged application behavior were manually checked.
+- Custom theme creation dialog was corrected so its Apply action remains reachable, then the rebuilt package was manually checked.
+- The package is a release candidate, not a claim of complete cross-platform or performance acceptance.
+
+Outstanding validation:
+
+- Physical low-end reference hardware has not been approved or tested.
+- Provisional startup, idle-memory, typing, and large-file performance targets remain unresolved.
+- Real-display frame pacing, HiDPI, and multi-monitor behavior remain unverified.
+- Screen-reader accessibility remains unimplemented.
+- Linux and macOS runtime and packaging remain unvalidated.
+- Native dialogs, Explorer drag/drop, and external application/terminal behavior still need broader manual validation.
