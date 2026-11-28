@@ -1,15 +1,23 @@
-# Note @NOTE_VERSION@ release notes
+# NOTE @NOTE_VERSION@ release notes
 
-Release date: not set. This is a release candidate built for testing.
+Release date: not set.
 
-Note is a lightweight, file-oriented text editor for Windows.
+NOTE is a lightweight, file-oriented text editor for Windows.
 
 ## Install
 
-1. Check the download against its checksum:
-   `Get-FileHash Note-@NOTE_VERSION@-windows-x64.zip -Algorithm SHA256`
-   The hash must match `Note-@NOTE_VERSION@-windows-x64.zip.sha256`.
-2. Unzip anywhere and run `note.exe`. No installer or extra runtime is needed.
+Choose either distribution:
+
+- **Windows installer:** Run `Note-@NOTE_VERSION@-windows-x64-Setup.exe`. It supports per-user or all-users installation, creates a Start Menu shortcut, and offers an optional Desktop shortcut.
+- **Portable ZIP:** Verify the SHA-256 checksum, extract the archive, and run `note.exe`.
+
+To verify the portable ZIP:
+
+```powershell
+Get-FileHash Note-@NOTE_VERSION@-windows-x64.zip -Algorithm SHA256
+```
+
+Compare the result with `Note-@NOTE_VERSION@-windows-x64.zip.sha256`.
 
 Settings, themes, session and recovery data are stored per user in `%APPDATA%\Note`.
 
@@ -22,6 +30,7 @@ Settings, themes, session and recovery data are stored per user in `%APPDATA%\No
 - Encoding and line-ending preservation, atomic saves and external-change detection.
 - Session restore and crash recovery of unsaved text.
 - Open the current file in another application, or a terminal in its folder.
+- Windows application icon and installer integration.
 
 Syntax highlighting and language detection are not part of this release.
 
@@ -31,9 +40,9 @@ Syntax highlighting and language detection are not part of this release.
 - Typing and opening large files miss the provisional performance targets on the 4 GB test laptop; see `docs/PERFORMANCE.md` in the source.
 - Large files are shown only after they are fully loaded.
 - The editor text is not exposed to screen readers.
-- If Note is killed while saving, a temporary file such as `name.txt.AbCdEf` may remain beside the original. The original file stays complete.
+- If NOTE is killed while saving, a temporary file such as `name.txt.AbCdEf` may remain beside the original. The original file stays complete.
 - Not yet checked by hand on a real display: native dialogs, drag and drop from Explorer, and external app or terminal launches.
 
 ## Licences
 
-Note is released under the MIT License (`LICENSE.txt`). Bundled Qt and toolchain libraries keep their own licences; see `THIRD-PARTY-NOTICES.txt` and the `licenses` folder.
+NOTE is released under the MIT License (`LICENSE.txt`). Bundled Qt and toolchain libraries keep their own licences; see `THIRD-PARTY-NOTICES.txt` and the `licenses` folder.

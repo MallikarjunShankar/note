@@ -2,12 +2,14 @@
 
 ## Current release
 
-The repository version is recorded in `VERSION`. The current version is **1.0.0**.
+The repository version is recorded in `VERSION`. The version currently being prepared is **1.0.1**. The published Windows release is **1.0.0**.
 
 The Windows distribution includes two packages:
 
 - **Portable ZIP:** extract and run `note.exe`.
 - **Windows installer:** provides per-user or all-users installation, Start Menu shortcut, optional Desktop shortcut, and an uninstaller.
+
+Both packages are release deliverables and are built from the same source version.
 
 The release workflow creates downloadable artifacts. It does not publish a GitHub Release, create a tag, or push.
 
@@ -57,7 +59,7 @@ MSYS2 packages roll forward. Older versions than those in the last column are un
 
 ## Version
 
-`VERSION` holds the only application version number, for example `1.0.0`. CMake reads it for the project version, the `note.exe` version resource, and `RELEASE_NOTES.md` (from `packaging/RELEASE_NOTES.md.in`).
+`VERSION` holds the only application version number, for example `1.0.1`. CMake reads it for the project version, the `note.exe` version resource, and `RELEASE_NOTES.md` (from `packaging/RELEASE_NOTES.md.in`).
 
 The release script uses it for the package names and installer version. To release a new version, update `VERSION` and the release notes template, then commit.
 

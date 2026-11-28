@@ -4,7 +4,7 @@
 
 NOTE is an open-source desktop text editor focused on simplicity, performance, reliability, and customisation. It provides a focused editing environment without the complexity of an IDE.
 
-**Current release:** 1.0.0-rc.1 (Windows x64 release candidate).
+**Current release:** 1.0.1 (Windows x64).
 
 The initial distribution target is Windows. The application is built with C++20, Qt 6 Widgets, and CMake.
 
