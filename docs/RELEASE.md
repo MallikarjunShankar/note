@@ -27,11 +27,11 @@ Verify that the tag, package filenames, executable version, and release title ag
 
 ## Toolchain
 
-NOTE is built with [MSYS2](https://www.msys2.org/) in its UCRT64 environment. Install MSYS2, then, in an MSYS2 shell:
+NOTE is built with [MSYS2](https://www.msys2.org/) in its MINGW64 environment. Install MSYS2, then, in an MSYS2 shell:
 
 ```sh
-pacman -S --needed mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake \
-    mingw-w64-ucrt-x86_64-ninja mingw-w64-ucrt-x86_64-qt6-base
+pacman -S --needed mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake \
+    mingw-w64-x86_64-ninja mingw-w64-x86_64-qt6-base
 ```
 
 `qt6-base` provides Qt and `windeployqt6`. `gcc` brings `binutils` (`objdump`, used to find DLL dependencies).
@@ -46,7 +46,7 @@ The release script searches `PATH` and standard Inno Setup installation location
 
 | Tool | Required | Last release build used |
 |---|---|---|
-| GCC (UCRT64) | C++20 | 16.2.0 (`mingw-w64-ucrt-x86_64-gcc 16.2.0-7`) |
+| GCC (MinGW64) | C++20 | 16.2.0 (`mingw-w64-x86_64-gcc 16.2.0-7`) |
 | CMake | 3.24 or later | 4.5.1 |
 | Ninja | any | 1.13.2 |
 | Qt | 6.5 or later | 6.12.0 (`qt6-base 6.12.0-2`) |
@@ -109,7 +109,7 @@ A clean build with two jobs takes roughly 15 minutes on a 4 GB laptop. Actual ti
 
 ## Continuous integration
 
-- `.github/workflows/ci.yml` runs on every push and pull request. It performs a Debug build and runs the tests on `windows-latest` with MSYS2 UCRT64.
+- `.github/workflows/ci.yml` runs on every push and pull request. It performs a Debug build and runs the tests on `windows-latest` with MSYS2 MINGW64.
 - `.github/workflows/release.yml` runs only when manually started through Actions > Release package > Run workflow.
 - The release workflow installs Inno Setup, runs `scripts/release.ps1`, and uploads the ZIP, installer, checksums, and release notes as the `note-windows-x64` artifact.
 

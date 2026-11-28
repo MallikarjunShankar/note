@@ -3,15 +3,15 @@
     Builds, tests and packages a Windows release of Note.
 
 .DESCRIPTION
-    Validates the MSYS2 UCRT64 toolchain, refuses a dirty Git tree, does a clean
+    Validates the MSYS2 MINGW64 toolchain, refuses a dirty Git tree, does a clean
     Release build, runs every test, deploys Qt and runtime DLLs, adds licence
     notices, writes a versioned zip with a SHA-256 checksum, then starts note.exe
     from the unzipped package without MSYS2 on PATH. Any failure stops the script
     with exit code 1. Requires Windows PowerShell 5.1 or later.
 
 .PARAMETER Msys2Root
-    MSYS2 installation folder (the one containing ucrt64 and usr). Detected from
-    the MSYS2 uninstall registry entry or a UCRT64 g++ on PATH when omitted.
+    MSYS2 installation folder (the one containing mingw64 and usr). Detected from
+    the MSYS2 uninstall registry entry or a MINGW64 g++ on PATH when omitted.
 
 .PARAMETER OutputRoot
     Folder for the package and build files. Must be outside the source folder.
@@ -74,18 +74,18 @@ function Find-Msys2Root([string]$Explicit) {
         }
         foreach ($command in @(Get-Command g++.exe -All -ErrorAction SilentlyContinue)) {
             $bin = Split-Path $command.Source
-            if ((Split-Path $bin -Leaf) -eq 'bin' -and (Split-Path (Split-Path $bin) -Leaf) -eq 'ucrt64') {
+            if ((Split-Path $bin -Leaf) -eq 'bin' -and (Split-Path (Split-Path $bin) -Leaf) -eq 'mingw64') {
                 $candidates += Split-Path (Split-Path $bin)
             }
         }
     }
     foreach ($candidate in $candidates) {
-        if (Test-Path (Join-Path $candidate 'ucrt64\bin\g++.exe')) {
+        if (Test-Path (Join-Path $candidate 'mingw64\bin\g++.exe')) {
             return (Resolve-Path $candidate).Path
         }
     }
-    if ($Explicit) { throw "No MSYS2 UCRT64 toolchain at '$Explicit' (expected ucrt64\bin\g++.exe)." }
-    throw 'MSYS2 UCRT64 toolchain not found. Install MSYS2 and the packages listed in docs/RELEASE.md, or pass -Msys2Root.'
+    if ($Explicit) { throw "No MSYS2 MINGW64 toolchain at '$Explicit' (expected mingw64\bin\g++.exe)." }
+    throw 'MSYS2 MINGW64 toolchain not found. Install MSYS2 and the packages listed in docs/RELEASE.md, or pass -Msys2Root.'
 }
 
 
@@ -131,9 +131,9 @@ function Test-IsInside([string]$Path, [string]$Folder) {
 # writes THIRD-PARTY-NOTICES.txt.
 function Add-LicenseNotices([string]$Stage, [string]$Root, [string]$Version) {
     $pacman = Join-Path $Root 'usr\bin\pacman.exe'
-    $bin = Join-Path $Root 'ucrt64\bin'
+    $bin = Join-Path $Root 'mingw64\bin'
     $plugins = @(Get-NativeOutput (Join-Path $bin 'qtpaths6.exe') @('--query', 'QT_INSTALL_PLUGINS'))[0]
-    # DLLs at the top come from ucrt64\bin; those in subfolders are Qt plugins.
+    # DLLs at the top come from mingw64\bin; those in subfolders are Qt plugins.
     # Relative paths come from enumeration so 8.3 short names in $Stage do not matter.
     $bundled = @()
     foreach ($dll in @(Get-ChildItem $Stage -Filter *.dll -File)) {
@@ -158,7 +158,7 @@ function Add-LicenseNotices([string]$Stage, [string]$Root, [string]$Version) {
     $licenses = Join-Path $Stage 'licenses'
     $rows = @()
     foreach ($package in $owners.Keys) {
-        $short = $package -replace '^mingw-w64-ucrt-x86_64-', ''
+        $short = $package -replace '^mingw-w64-x86_64-', ''
         $packageVersion = (@(Get-NativeOutput $pacman @('-Q', $package))[0] -split ' ')[1]
         $packageFiles = @(Get-NativeOutput $pacman @('-Qql', $package))
         # Usually share/licenses/<package>/...; some packages (ICU) keep a LICENSE elsewhere.
@@ -186,7 +186,7 @@ Note $Version - third-party notices
 Note itself is released under the MIT License (LICENSE.txt).
 
 This package bundles the libraries below, unmodified, as DLLs built by the
-MSYS2 project for its UCRT64 environment. Each keeps its own licence; the full
+MSYS2 project for its MINGW64 environment. Each keeps its own licence; the full
 texts are in the licenses folder, one subfolder per package.
 
 Qt 6 (Qt6Core.dll, Qt6Gui.dll, Qt6Widgets.dll and the plugins in platforms and
@@ -292,7 +292,7 @@ try {
 
     Write-Step 'Toolchain'
     $root = Find-Msys2Root $Msys2Root
-    $bin = Join-Path $root 'ucrt64\bin'
+    $bin = Join-Path $root 'mingw64\bin'
     $tools = [ordered]@{}
     foreach ($tool in 'g++', 'cmake', 'ctest', 'ninja', 'windeployqt6', 'qtpaths6', 'objdump') {
         $path = Join-Path $bin "$tool.exe"
@@ -345,7 +345,7 @@ try {
     Invoke-Native $tools['cmake'] @('-S', $repo, '-B', $build, '-G', 'Ninja',
         '-DCMAKE_BUILD_TYPE=Release', '-DBUILD_TESTING=ON',
         "-DCMAKE_CXX_COMPILER=$($tools['g++'])", "-DCMAKE_MAKE_PROGRAM=$($tools['ninja'])",
-        "-DCMAKE_PREFIX_PATH=$(Join-Path $root 'ucrt64')")
+        "-DCMAKE_PREFIX_PATH=$(Join-Path $root 'mingw64')")
 
     Write-Step "Build ($Jobs jobs)"
     Invoke-Native $tools['cmake'] @('--build', $build, '--parallel', "$Jobs")

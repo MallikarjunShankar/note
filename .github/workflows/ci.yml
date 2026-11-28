@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   windows:
-    name: Windows (MSYS2 UCRT64, Debug)
+    name: Windows (MSYS2 MINGW64, Debug)
     runs-on: windows-latest
     defaults:
       run:
@@ -19,13 +19,13 @@ jobs:
 
       - uses: msys2/setup-msys2@v2
         with:
-          msystem: UCRT64
+          msystem: MINGW64
           update: true
           install: >-
-            mingw-w64-ucrt-x86_64-gcc
-            mingw-w64-ucrt-x86_64-cmake
-            mingw-w64-ucrt-x86_64-ninja
-            mingw-w64-ucrt-x86_64-qt6-base
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-qt6-base
 
       - name: Toolchain versions
         run: |
